@@ -1,0 +1,44 @@
+{
+  "name": "pi-brand",
+  "version": "0.1.0",
+  "description": "Name apps fast: generate candidates with the agent, pick favorites in a multi-select UI, remember likes across rounds",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-coding-agent",
+    "branding",
+    "naming"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "test",
+    "README.md",
+    "package.json",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "validate": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
