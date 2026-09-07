@@ -12,6 +12,10 @@ export interface PickOptions {
   likedSoFar?: string[];
   /** Names whose availability was already deep-checked in this project. */
   checkedNames?: string[];
+  /** How many of this round's candidates were dropped as already seen. */
+  droppedDuplicates?: string[];
+  /** Total names permanently excluded in this project, for the header tally. */
+  excludedTotal?: number;
 }
 
 type PickerContext = ExtensionContext | ExtensionCommandContext;
@@ -227,10 +231,25 @@ export async function pickNames(
       const countCell =
         picked > 0
           ? theme.fg("success", `${ICON_CHECKED} ${picked} picked`)
-          : theme.fg("dim", `${ICON_UNCHECKED} nothing picked yet`);
+          : theme.fg("dim", `${ICON_UNCHECKED} none picked`);
       const header = theme.bold(title);
-      const productCell = options.product ? theme.fg("dim", `  ·  ${options.product}  ·  `) : theme.fg("dim", "  ·  ");
-      headerLine.setText(`${header}${productCell}${countCell}`);
+      const dups = options.droppedDuplicates ?? [];
+      const tally: string[] = [];
+      if (options.excludedTotal && options.excludedTotal > 0) {
+        tally.push(
+          `${options.excludedTotal} excluded${dups.length > 0 ? ` · ${dups.length} of yours were dups` : ""}`,
+        );
+      }
+      // Counts come before the product line: if the row has to truncate, it
+      // should lose the decorative description, not the state summary.
+      const tail = [
+        options.product ? theme.fg("dim", options.product) : "",
+      ].filter(Boolean);
+      headerLine.setText(
+        [header, countCell, ...tally.map((text) => theme.fg("dim", text)), ...tail]
+          .filter(Boolean)
+          .join(theme.fg("dim", "  ·  ")),
+      );
 
       const filterIcon = theme.fg("muted", `${ICON_SEARCH} `);
       filterLine.setText(
@@ -256,10 +275,10 @@ export async function pickNames(
       ).length;
       const availabilityLabel =
         shortlist.length === 0
-          ? "availability (nothing kept)"
+          ? "availability: nothing kept"
           : uncheckedCount === 0
-            ? `availability (all ${shortlist.length} checked)`
-            : `availability (${uncheckedCount} of ${shortlist.length} unchecked)`;
+            ? `availability: all ${shortlist.length} checked`
+            : `availability: ${uncheckedCount} of ${shortlist.length} unchecked`;
 
       const key = (label: string): string => theme.fg("accent", label);
       const sep = theme.fg("dim", "  ·  ");

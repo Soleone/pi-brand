@@ -1,5 +1,16 @@
 import type { BrandState } from "./types.ts";
 
+/** Count of every name this project has ever shown, kept, or rejected. */
+function excludedCount(state: BrandState): number {
+  const all = new Set<string>();
+  for (const round of state.rounds) {
+    for (const candidate of round.candidates) all.add(candidate.name.toLocaleLowerCase());
+  }
+  for (const entry of state.liked) all.add(entry.name.toLocaleLowerCase());
+  for (const name of state.dismissed) all.add(name.toLocaleLowerCase());
+  return all.size;
+}
+
 /**
  * Short reminder injected into LLM context so later search rounds stay aware
  * of the path: what the user liked, what to avoid, and which direction to
@@ -8,7 +19,15 @@ import type { BrandState } from "./types.ts";
 export function buildBrandContext(state: BrandState, maxLiked = 20): string | undefined {
   const liked = state.liked.slice(-maxLiked).map((entry) => entry.name);
   const hasAvailability = Object.keys(state.availability).length > 0;
-  if (liked.length === 0 && state.directionNotes.length === 0 && !hasAvailability) return undefined;
+  const excluded = excludedCount(state);
+  if (
+    liked.length === 0 &&
+    state.directionNotes.length === 0 &&
+    !hasAvailability &&
+    excluded === 0
+  ) {
+    return undefined;
+  }
 
   const parts: string[] = ["[brand] naming direction so far:"];
   if (state.product) parts.push(`Product: ${state.product}`);
@@ -16,7 +35,14 @@ export function buildBrandContext(state: BrandState, maxLiked = 20): string | un
     parts.push(`Liked names (bias future rounds toward this vibe): ${liked.join(", ")}`);
   }
   if (state.dismissed.length > 0) {
-    parts.push(`Avoid (already rejected): ${state.dismissed.slice(-20).join(", ")}`);
+    parts.push(
+      `Rejected for good, never propose again (${state.dismissed.length} total): ${state.dismissed.slice(-20).join(", ")}`,
+    );
+  }
+  if (excluded > 0) {
+    parts.push(
+      `${excluded} names are excluded in this project. brand_pick drops them in code and bounces a round built from reused names, so do not re-derive the list, just never repeat a name.`,
+    );
   }
   const checked = Object.entries(state.availability);
   if (checked.length > 0) {
@@ -29,7 +55,7 @@ export function buildBrandContext(state: BrandState, maxLiked = 20): string | un
     parts.push(`Direction notes: ${state.directionNotes.slice(-5).join(" | ")}`);
   }
   parts.push(
-    "Do not repeat seen names. When generating, call the brand_pick tool to confirm picks.",
+    "When generating, call the brand_pick tool to confirm picks. It filters every previously seen name in code, so reused names never reach the picker.",
   );
   parts.push(
     "User exits: /brand more (next shortlist, same direction) · /brand pivot <note> (new direction) · /brand check (availability deep-check of kept names). Offer these instead of asking open questions.",
@@ -37,7 +63,29 @@ export function buildBrandContext(state: BrandState, maxLiked = 20): string | un
   return parts.join("\n");
 }
 
-const SEEN_LIMIT = 60;
+const SEEN_LIMIT = 40;
+
+/**
+ * Exclusion notice for a generation prompt. The count matters more than the
+ * sample: brand_pick drops reused names in code, so the list below is only
+ * flavour for steering clear of near-duplicates.
+ */
+function exclusionLine(state: BrandState): string {
+  const merged = [
+    ...new Set([
+      ...state.rounds.flatMap((round) => round.candidates.map((c) => c.name)),
+      ...state.liked.map((entry) => entry.name),
+      ...state.dismissed,
+    ]),
+  ];
+  if (merged.length === 0) return "No names are excluded yet, this is the first shortlist.";
+  const sample = merged.slice(-SEEN_LIMIT).join(", ");
+  const overflow = merged.length > SEEN_LIMIT ? ` (+${merged.length - SEEN_LIMIT} earlier)` : "";
+  return [
+    `Excluded, never propose again (${merged.length} total): ${sample}${overflow}`,
+    "brand_pick drops these in code, so a round built from reused names bounces and the picker never opens. Make every candidate new.",
+  ].join("\n");
+}
 
 /** Reuse the current direction and pull up another shortlist. */
 export function buildMorePrompt(state: BrandState): string {
@@ -57,7 +105,7 @@ export function buildMorePrompt(state: BrandState): string {
   if (state.directionNotes.length > 0) {
     lines.push("", `Direction notes (all of these apply): ${state.directionNotes.slice(-5).join(" | ")}`);
   }
-  lines.push("", `Already suggested (do not repeat, including rejected): ${seenList(state)}`);
+  lines.push("", exclusionLine(state));
   lines.push("", "Then call the brand_pick tool with the survivors (name plus one-line flavor note each).");
   return lines.join("\n");
 }
@@ -97,13 +145,6 @@ export function buildAvailabilityPrompt(state: BrandState): string {
   return lines.join("\n");
 }
 
-function seenList(state: BrandState): string {
-  const seen = state.rounds.flatMap((round) => round.candidates.map((c) => c.name));
-  const dismissed = state.dismissed;
-  const merged = [...new Set([...seen, ...dismissed])];
-  return merged.slice(-SEEN_LIMIT).join(", ") || "(none yet)";
-}
-
 /** Prompt sent when /brand starts a new round. */
 export function buildRoundPrompt(product: string, state: BrandState): string {
   const lines: string[] = [
@@ -127,9 +168,8 @@ export function buildRoundPrompt(product: string, state: BrandState): string {
   if (state.directionNotes.length > 0) {
     lines.push("", `Direction notes: ${state.directionNotes.slice(-5).join(" | ")}`);
   }
-  const seen = state.rounds.flatMap((round) => round.candidates.map((c) => c.name));
-  if (seen.length > 0) {
-    lines.push("", `Already suggested (do not repeat): ${seen.slice(-SEEN_LIMIT).join(", ")}`);
+  if (state.rounds.length > 0) {
+    lines.push("", exclusionLine(state));
   }
 
   lines.push(

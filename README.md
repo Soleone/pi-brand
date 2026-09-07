@@ -34,9 +34,31 @@ Same steps from the keyboard, for when the picker is already closed:
 - `/brand check <name>` cached availability for one name
 - `/brand likes` kept names (with scores once checked)
 - `/brand note <text>` add a direction note (e.g. more like X, less cute)
-- `/brand dismiss <name>` reject a name for future rounds
+- `/brand dismiss <name>` reject a name for future rounds (multiple names allowed)
+- `/brand excluded` how many names are permanently filtered out
 - `/brand clear` wipe rounds, likes, notes, and cached availability
 - `/brand help` the list above
+
+## Exclusions (hundreds of names are fine)
+
+Nothing relies on the model remembering the list. Every name ever shown in a
+round, kept, or rejected is excluded in code:
+
+- `brand_pick` filters each incoming candidate against that set, shows only
+  the new ones, and reports which of yours were dropped. A round made entirely
+  of reused names bounces without opening the picker, since showing it would
+  waste the interaction.
+- The picker header carries the running tally (`143 excluded · 2 of yours were
+  dups`), so dropped names are visible rather than silently vanishing.
+- Rejection is explicit: reject-all (or `/brand dismiss <a> <b>`) adds names to
+  `dismissed`, which is deduped case-insensitively and never pruned. Names that
+  were merely not picked stay excluded through the round record.
+- Prompts state the total plus the most recent sample, never pretending to be
+  complete. The injected context says the filtering is enforced in code, so the
+  agent spends no effort re-deriving lists.
+- `brand_seen` is the cheap local batch check: hand it a long candidate pool and
+  it returns which are new, which are kept, rejected, or already shown.
+- `/brand excluded` prints the counts; `/brand check <name>` the cached score.
 
 ## Availability score (never researched twice)
 

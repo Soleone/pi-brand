@@ -204,6 +204,35 @@ export function seenNames(state: BrandState): Set<string> {
   return seen;
 }
 
+/**
+ * Add names to the permanent do-not-suggest-again list, deduped
+ * case-insensitively. Returns how many were new, so callers can report it.
+ */
+export function dismissNames(state: BrandState, names: Iterable<string>): string[] {
+  const known = new Set(state.dismissed.map((name) => name.toLocaleLowerCase()));
+  const added: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim();
+    if (!name || known.has(name.toLocaleLowerCase())) continue;
+    known.add(name.toLocaleLowerCase());
+    state.dismissed.push(name);
+    added.push(name);
+  }
+  return added;
+}
+
+/**
+ * Every name this project has ever shown, kept, or rejected. This is the
+ * authoritative duplicate filter: it is checked in code, never from a
+ * truncated prompt list, so it holds at hundreds of names.
+ */
+export function excludedNames(state: BrandState): { seen: Set<string>; kept: Set<string> } {
+  const kept = new Set(state.liked.map((entry) => entry.name.toLocaleLowerCase()));
+  const seen = seenNames(state);
+  for (const name of state.dismissed) seen.add(name.toLocaleLowerCase());
+  return { seen, kept };
+}
+
 function normalizeState(raw: unknown): BrandState | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;

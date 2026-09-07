@@ -1,7 +1,7 @@
 {
   "version": 1,
   "product": "a todo list for the agentic age, similarly to omarchy linux",
-  "updatedAt": "2026-09-07T07:28:01.724Z",
+  "updatedAt": "2026-09-07T07:39:10.843Z",
   "rounds": [
     {
       "id": "r1-mtqr254j",
@@ -843,6 +843,34 @@
           "style": "plain"
         }
       ]
+    },
+    {
+      "id": "r13-mtqx907m",
+      "createdAt": "2026-09-07T07:31:05.938Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 13. Last fresh words after 149 seen. No padding, no wordplay.",
+      "candidates": [
+        {
+          "name": "Onit",
+          "flavor": "on it",
+          "style": "plain"
+        },
+        {
+          "name": "Handled",
+          "flavor": "handled",
+          "style": "plain"
+        },
+        {
+          "name": "Dibs",
+          "flavor": "called it",
+          "style": "playful"
+        },
+        {
+          "name": "Kempt",
+          "flavor": "tidy, the word unkempt is hiding",
+          "style": "plain"
+        }
+      ]
     }
   ],
   "liked": [
@@ -960,6 +988,13 @@
       "style": "plain",
       "roundId": "r10-mtqvylzg",
       "likedAt": "2026-09-07T07:11:59.220Z"
+    },
+    {
+      "name": "Dibs",
+      "flavor": "called it",
+      "style": "playful",
+      "roundId": "r13-mtqx907m",
+      "likedAt": "2026-09-07T07:38:29.365Z"
     }
   ],
   "dismissed": [
@@ -1000,7 +1035,8 @@
     "Round 11. User: more from existing directions. Past/verb forms of kept names plus two fresh establishment nouns (Minutes, Dossier).",
     "rally vs rallied, e.g. i dont know. need real variation, not just wordplay",
     "Round 12. Existing routes only, genuinely fresh words, no -ed wordplay, no padding. Short round on purpose.",
-    "try others"
+    "try others",
+    "Round 13. Last fresh words after 149 seen. No padding, no wordplay."
   ],
   "availability": {}
 }
