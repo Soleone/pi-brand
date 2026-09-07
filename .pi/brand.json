@@ -1,0 +1,791 @@
+{
+  "version": 1,
+  "product": "a todo list for the agentic age, similarly to omarchy linux",
+  "updatedAt": "2026-09-07T06:17:14.837Z",
+  "rounds": [
+    {
+      "id": "r1-mtqr254j",
+      "createdAt": "2026-09-07T04:37:48.019Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "First round, no prior likes. Mix of plain, commanding, playful, invented.",
+      "candidates": [
+        {
+          "name": "Errand",
+          "flavor": "agents run your errands",
+          "style": "plain"
+        },
+        {
+          "name": "Dispatch",
+          "flavor": "send tasks off, verb-able",
+          "style": "plain"
+        },
+        {
+          "name": "Delegate",
+          "flavor": "hand it off, verb-able",
+          "style": "plain"
+        },
+        {
+          "name": "Docket",
+          "flavor": "your list of charges",
+          "style": "plain"
+        },
+        {
+          "name": "Tidy",
+          "flavor": "tidy up your todos",
+          "style": "plain"
+        },
+        {
+          "name": "Soon",
+          "flavor": "do it soon",
+          "style": "plain"
+        },
+        {
+          "name": "Muster",
+          "flavor": "muster the troops, verb",
+          "style": "command"
+        },
+        {
+          "name": "Edict",
+          "flavor": "todos as issued decrees",
+          "style": "command"
+        },
+        {
+          "name": "Mandate",
+          "flavor": "missions with authority, verb",
+          "style": "command"
+        },
+        {
+          "name": "Squire",
+          "flavor": "your knight's assistant",
+          "style": "playful"
+        },
+        {
+          "name": "Golem",
+          "flavor": "tireless clay worker you command",
+          "style": "playful"
+        },
+        {
+          "name": "Genie",
+          "flavor": "wishes granted",
+          "style": "playful"
+        },
+        {
+          "name": "Intern",
+          "flavor": "agents as eager interns",
+          "style": "playful"
+        },
+        {
+          "name": "Tada",
+          "flavor": "ta-da, it's done",
+          "style": "playful"
+        },
+        {
+          "name": "Ordo",
+          "flavor": "latin for order",
+          "style": "invented"
+        }
+      ]
+    },
+    {
+      "id": "r2-mtqr7x59",
+      "createdAt": "2026-09-07T04:42:17.613Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 2, biased toward round-1 likes (Docket, Tidy, Soon, Muster, Tada): short plain words, punchy verbs, done-energy.",
+      "candidates": [
+        {
+          "name": "Ship",
+          "flavor": "ship it",
+          "style": "plain"
+        },
+        {
+          "name": "Chop",
+          "flavor": "chop chop",
+          "style": "plain"
+        },
+        {
+          "name": "Nail",
+          "flavor": "nail it",
+          "style": "plain"
+        },
+        {
+          "name": "Sort",
+          "flavor": "sort it out",
+          "style": "plain"
+        },
+        {
+          "name": "Prune",
+          "flavor": "prune the list",
+          "style": "plain"
+        },
+        {
+          "name": "Sweep",
+          "flavor": "sweep through",
+          "style": "plain"
+        },
+        {
+          "name": "Done",
+          "flavor": "the whole point",
+          "style": "plain"
+        },
+        {
+          "name": "Land",
+          "flavor": "land it",
+          "style": "plain"
+        },
+        {
+          "name": "Bag",
+          "flavor": "in the bag",
+          "style": "plain"
+        },
+        {
+          "name": "Tally",
+          "flavor": "count the wins",
+          "style": "plain"
+        },
+        {
+          "name": "Ding",
+          "flavor": "done-ding",
+          "style": "playful"
+        },
+        {
+          "name": "Beep",
+          "flavor": "robot done-sound",
+          "style": "playful"
+        },
+        {
+          "name": "Tock",
+          "flavor": "clock's other half",
+          "style": "playful"
+        },
+        {
+          "name": "Pluck",
+          "flavor": "pluck it off",
+          "style": "playful"
+        },
+        {
+          "name": "Punchlist",
+          "flavor": "construction term for a todo list",
+          "style": "playful"
+        }
+      ]
+    },
+    {
+      "id": "r3-mtqrvu6k",
+      "createdAt": "2026-09-07T05:00:53.516Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 3. Round 2 (punchy verbs) was cancelled with no picks, pivoting back toward round-1 likes (Docket, Tidy, Soon, Muster, Tada): calm establishment nouns, tidy words, keepers of order.",
+      "candidates": [
+        {
+          "name": "Roster",
+          "flavor": "the duty roster",
+          "style": "plain"
+        },
+        {
+          "name": "Brief",
+          "flavor": "the morning brief",
+          "style": "plain"
+        },
+        {
+          "name": "Order",
+          "flavor": "sequence and command in one",
+          "style": "plain"
+        },
+        {
+          "name": "Clerk",
+          "flavor": "keeps the records",
+          "style": "plain"
+        },
+        {
+          "name": "Neat",
+          "flavor": "neat and tidy",
+          "style": "plain"
+        },
+        {
+          "name": "Spruce",
+          "flavor": "spruce up your day",
+          "style": "plain"
+        },
+        {
+          "name": "Cubby",
+          "flavor": "todos tucked away",
+          "style": "playful"
+        },
+        {
+          "name": "Memo",
+          "flavor": "memos to your agents",
+          "style": "plain"
+        },
+        {
+          "name": "Sheriff",
+          "flavor": "keeps todos in line",
+          "style": "command"
+        },
+        {
+          "name": "Steward",
+          "flavor": "keeps the household",
+          "style": "command"
+        },
+        {
+          "name": "Summon",
+          "flavor": "summon your agents",
+          "style": "command"
+        },
+        {
+          "name": "Vigil",
+          "flavor": "agents keep watch",
+          "style": "invented"
+        },
+        {
+          "name": "Huddle",
+          "flavor": "agents gather round",
+          "style": "playful"
+        },
+        {
+          "name": "Over",
+          "flavor": "it's over, done",
+          "style": "plain"
+        },
+        {
+          "name": "Finito",
+          "flavor": "Italian for done",
+          "style": "playful"
+        }
+      ]
+    },
+    {
+      "id": "r4-mtqse0yj",
+      "createdAt": "2026-09-07T05:15:02.107Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 4, biased toward full kept list (Docket, Tidy, Soon, Muster, Tada, Brief, Neat, Memo, Steward) and user's Soon-like ask: short time-words and quiet plain words nobody has productized.",
+      "candidates": [
+        {
+          "name": "Now",
+          "flavor": "do it now",
+          "style": "plain"
+        },
+        {
+          "name": "Early",
+          "flavor": "do it early",
+          "style": "plain"
+        },
+        {
+          "name": "Clock",
+          "flavor": "beat the clock",
+          "style": "plain"
+        },
+        {
+          "name": "Imminent",
+          "flavor": "due any second",
+          "style": "plain"
+        },
+        {
+          "name": "Did",
+          "flavor": "did it",
+          "style": "plain"
+        },
+        {
+          "name": "Ready",
+          "flavor": "ready, set, go",
+          "style": "plain"
+        },
+        {
+          "name": "Null",
+          "flavor": "nothing left",
+          "style": "invented"
+        },
+        {
+          "name": "Simple",
+          "flavor": "plain and simple",
+          "style": "plain"
+        },
+        {
+          "name": "Steady",
+          "flavor": "steady progress",
+          "style": "plain"
+        },
+        {
+          "name": "Vow",
+          "flavor": "promises to self",
+          "style": "plain"
+        },
+        {
+          "name": "Blip",
+          "flavor": "on the radar",
+          "style": "playful"
+        },
+        {
+          "name": "Shipshape",
+          "flavor": "shipshape and tidy",
+          "style": "playful"
+        }
+      ]
+    },
+    {
+      "id": "r5-mtqsm0js",
+      "createdAt": "2026-09-07T05:21:14.824Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 5. Shipshape was removed by user. Threads that landed: Brief-siblings, done-energy, old-timey words, naval crew. 12 fresh names, no repeats.",
+      "candidates": [
+        {
+          "name": "Debrief",
+          "flavor": "end-of-day debrief",
+          "style": "plain"
+        },
+        {
+          "name": "Recap",
+          "flavor": "recap the day",
+          "style": "plain"
+        },
+        {
+          "name": "Wrap",
+          "flavor": "wrap it up",
+          "style": "plain"
+        },
+        {
+          "name": "Savor",
+          "flavor": "savor the wins",
+          "style": "plain"
+        },
+        {
+          "name": "Pulse",
+          "flavor": "check your pulse",
+          "style": "plain"
+        },
+        {
+          "name": "Gumption",
+          "flavor": "sheer initiative",
+          "style": "plain"
+        },
+        {
+          "name": "Brass",
+          "flavor": "brass tacks",
+          "style": "plain"
+        },
+        {
+          "name": "Bylaw",
+          "flavor": "house rules",
+          "style": "plain"
+        },
+        {
+          "name": "Trim",
+          "flavor": "trim the ship",
+          "style": "plain"
+        },
+        {
+          "name": "Batten",
+          "flavor": "batten the hatches",
+          "style": "plain"
+        },
+        {
+          "name": "Keel",
+          "flavor": "an even keel",
+          "style": "plain"
+        },
+        {
+          "name": "Refit",
+          "flavor": "refit the ship",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r6-mtqt2akx",
+      "createdAt": "2026-09-07T05:33:54.321Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 6. User direction: excitement to get stuff done, organizing life, making a change, having impact. High-energy momentum words.",
+      "candidates": [
+        {
+          "name": "Zeal",
+          "flavor": "pure excitement",
+          "style": "playful"
+        },
+        {
+          "name": "Eager",
+          "flavor": "eager to start",
+          "style": "plain"
+        },
+        {
+          "name": "Dazzle",
+          "flavor": "razzle-dazzle",
+          "style": "playful"
+        },
+        {
+          "name": "Jolt",
+          "flavor": "a jolt of energy",
+          "style": "playful"
+        },
+        {
+          "name": "Dent",
+          "flavor": "make a dent",
+          "style": "plain"
+        },
+        {
+          "name": "Goal",
+          "flavor": "goals, obviously",
+          "style": "plain"
+        },
+        {
+          "name": "Aim",
+          "flavor": "aim high",
+          "style": "plain"
+        },
+        {
+          "name": "Win",
+          "flavor": "win the day",
+          "style": "plain"
+        },
+        {
+          "name": "Adapt",
+          "flavor": "adapt and go",
+          "style": "plain"
+        },
+        {
+          "name": "Mobilize",
+          "flavor": "mobilize the day",
+          "style": "command"
+        },
+        {
+          "name": "Action",
+          "flavor": "take action",
+          "style": "plain"
+        },
+        {
+          "name": "Rhythm",
+          "flavor": "get in a rhythm",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r7-mtqt768o",
+      "createdAt": "2026-09-07T05:37:41.976Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 7. User wants playful and creative, grounded (celebrations/grins/punch) not fantasy. Tada landed before, Golem/Genie did not.",
+      "candidates": [
+        {
+          "name": "Heypresto",
+          "flavor": "hey presto",
+          "style": "playful"
+        },
+        {
+          "name": "Tadone",
+          "flavor": "ta-da plus done",
+          "style": "playful"
+        },
+        {
+          "name": "Fizz",
+          "flavor": "celebration fizz",
+          "style": "playful"
+        },
+        {
+          "name": "Confetti",
+          "flavor": "done-party",
+          "style": "playful"
+        },
+        {
+          "name": "Shindig",
+          "flavor": "shindig",
+          "style": "playful"
+        },
+        {
+          "name": "Hubbub",
+          "flavor": "happy chaos",
+          "style": "playful"
+        },
+        {
+          "name": "Brouhaha",
+          "flavor": "beautiful ruckus",
+          "style": "playful"
+        },
+        {
+          "name": "Chuckle",
+          "flavor": "todos that make you chuckle",
+          "style": "playful"
+        },
+        {
+          "name": "Whee",
+          "flavor": "whee",
+          "style": "playful"
+        },
+        {
+          "name": "Heyday",
+          "flavor": "glory days",
+          "style": "playful"
+        },
+        {
+          "name": "Outdo",
+          "flavor": "outdo yesterday",
+          "style": "plain"
+        },
+        {
+          "name": "Shanty",
+          "flavor": "sea shanties",
+          "style": "playful"
+        }
+      ]
+    },
+    {
+      "id": "r8-mtqtzfuz",
+      "createdAt": "2026-09-07T05:59:40.811Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 8. User correction: playful but NOT hippie. Dry wit and sharp, understated. No flower-power.",
+      "candidates": [
+        {
+          "name": "Droll",
+          "flavor": "dry by definition",
+          "style": "playful"
+        },
+        {
+          "name": "Deadpan",
+          "flavor": "keep a straight face",
+          "style": "playful"
+        },
+        {
+          "name": "Pithy",
+          "flavor": "short and sharp",
+          "style": "playful"
+        },
+        {
+          "name": "Witty",
+          "flavor": "banter",
+          "style": "playful"
+        },
+        {
+          "name": "Jest",
+          "flavor": "court fool energy",
+          "style": "playful"
+        },
+        {
+          "name": "Dapper",
+          "flavor": "sharp-dressed todos",
+          "style": "playful"
+        },
+        {
+          "name": "Jaunty",
+          "flavor": "jaunty angle",
+          "style": "playful"
+        },
+        {
+          "name": "Nifty",
+          "flavor": "handy",
+          "style": "plain"
+        },
+        {
+          "name": "Dandy",
+          "flavor": "fine and dandy",
+          "style": "playful"
+        },
+        {
+          "name": "Grin",
+          "flavor": "grin and bear it",
+          "style": "plain"
+        },
+        {
+          "name": "Scrappy",
+          "flavor": "underdog energy",
+          "style": "plain"
+        },
+        {
+          "name": "Less",
+          "flavor": "less is more",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r9-mtqujrpy",
+      "createdAt": "2026-09-07T06:15:29.302Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 9. User: less jokey, momentum/action like Rally/Succeed/Go. Get the ball rolling, not grinning. Rally included at user direction despite known Broadcom collision.",
+      "candidates": [
+        {
+          "name": "Rally",
+          "flavor": "muster the energy",
+          "style": "plain"
+        },
+        {
+          "name": "Propel",
+          "flavor": "propel forward",
+          "style": "plain"
+        },
+        {
+          "name": "Soar",
+          "flavor": "soar",
+          "style": "plain"
+        },
+        {
+          "name": "Succeed",
+          "flavor": "succeed",
+          "style": "plain"
+        },
+        {
+          "name": "Knock",
+          "flavor": "knock it out",
+          "style": "plain"
+        },
+        {
+          "name": "Upshot",
+          "flavor": "the upshot",
+          "style": "plain"
+        },
+        {
+          "name": "Slingshot",
+          "flavor": "momentum",
+          "style": "playful"
+        },
+        {
+          "name": "Catapult",
+          "flavor": "launch",
+          "style": "playful"
+        },
+        {
+          "name": "Throwdown",
+          "flavor": "throw down the gauntlet",
+          "style": "playful"
+        },
+        {
+          "name": "Fray",
+          "flavor": "enter the fray",
+          "style": "plain"
+        },
+        {
+          "name": "Outset",
+          "flavor": "from the outset",
+          "style": "plain"
+        },
+        {
+          "name": "Bonfire",
+          "flavor": "light it up",
+          "style": "playful"
+        }
+      ]
+    }
+  ],
+  "liked": [
+    {
+      "name": "Docket",
+      "flavor": "your list of charges",
+      "style": "plain",
+      "roundId": "r1-mtqr254j",
+      "likedAt": "2026-09-07T04:41:07.118Z",
+      "score": "terrible",
+      "scoreReason": "live Class-42 trademark (Docket Inc, filed 2026) plus live receipt-tracker product and legal docketing software"
+    },
+    {
+      "name": "Tidy",
+      "flavor": "tidy up your todos",
+      "style": "plain",
+      "roundId": "r1-mtqr254j",
+      "likedAt": "2026-09-07T04:41:07.118Z",
+      "score": "bad",
+      "scoreReason": "registered TIDY APP mark plus same-category thetidy.app workspace and TidyApp business tool; npm/GitHub/all TLDs taken"
+    },
+    {
+      "name": "Soon",
+      "flavor": "do it soon",
+      "style": "plain",
+      "roundId": "r1-mtqr254j",
+      "likedAt": "2026-09-07T04:41:07.118Z",
+      "score": "decent",
+      "scoreReason": "no notable collision anywhere; npm and all major TLDs taken but soon.me free; nobody thinks of another Soon"
+    },
+    {
+      "name": "Muster",
+      "flavor": "muster the troops, verb",
+      "style": "command",
+      "roundId": "r1-mtqr254j",
+      "likedAt": "2026-09-07T04:41:07.118Z",
+      "score": "bad",
+      "scoreReason": "live muster.io app with explicit trademark claim (adjacent planning space) plus maritime Muster app and military Mustr"
+    },
+    {
+      "name": "Tada",
+      "flavor": "ta-da, it's done",
+      "style": "playful",
+      "roundId": "r1-mtqr254j",
+      "likedAt": "2026-09-07T04:41:07.118Z",
+      "score": "bad",
+      "scoreReason": "Hume AI ships open-source TADA speech model (1k stars, HF, arXiv) in the same AI space"
+    },
+    {
+      "name": "Brief",
+      "flavor": "the morning brief",
+      "style": "plain",
+      "roundId": "r3-mtqrvu6k",
+      "likedAt": "2026-09-07T05:03:18.225Z",
+      "score": "bad",
+      "scoreReason": "gobrief project-mgmt-with-tasks plus brief-app AI brief, getbriefapp summarizer, Brief social app"
+    },
+    {
+      "name": "Neat",
+      "flavor": "neat and tidy",
+      "style": "plain",
+      "roundId": "r3-mtqrvu6k",
+      "likedAt": "2026-09-07T05:03:18.225Z",
+      "score": "decent",
+      "scoreReason": "thoughtbot/neat is a deprecated 2016 Sass grid in another category; all TLDs taken; devs may briefly think of Bourbon"
+    },
+    {
+      "name": "Memo",
+      "flavor": "memos to your agents",
+      "style": "plain",
+      "roundId": "r3-mtqrvu6k",
+      "likedAt": "2026-09-07T05:03:18.225Z",
+      "score": "bad",
+      "scoreReason": "getmemo.app live tasks app plus ToDo-memo and Memo&Todo kanban in the same category, YC Memo comms, mattn/memo"
+    },
+    {
+      "name": "Steward",
+      "flavor": "keeps the household",
+      "style": "command",
+      "roundId": "r3-mtqrvu6k",
+      "likedAt": "2026-09-07T05:03:18.225Z",
+      "score": "terrible",
+      "scoreReason": "live registered US trademark (STWRD Inc, Cl 9/41/42) plus live AI concierge on App Store plus active SF Use Steward Inc"
+    },
+    {
+      "name": "Rally",
+      "flavor": "muster the energy",
+      "style": "plain",
+      "roundId": "r9-mtqujrpy",
+      "likedAt": "2026-09-07T06:17:14.836Z",
+      "score": "terrible",
+      "scoreReason": "live registered trademark since 2009 (Cl 9) plus Rally by Broadcom, the leading enterprise agile management suite, direct same-category collision"
+    },
+    {
+      "name": "Soar",
+      "flavor": "soar",
+      "style": "plain",
+      "roundId": "r9-mtqujrpy",
+      "likedAt": "2026-09-07T06:17:14.836Z",
+      "score": "bad",
+      "scoreReason": "Xiaomi/soar SQL optimizer 8.7k stars plus pkgforge/soar Linux package manager plus live Soar travel apps; crowded, none exactly todo"
+    },
+    {
+      "name": "Outset",
+      "flavor": "from the outset",
+      "style": "plain",
+      "roundId": "r9-mtqujrpy",
+      "likedAt": "2026-09-07T06:17:14.836Z",
+      "score": "bad",
+      "scoreReason": "Outset (Parnassus Labs) YC-backed AI interview platform, $51M raised, OUTSET.AI trademark app filed 2026; funded same-AI-space collision; only outset.sh free"
+    }
+  ],
+  "dismissed": [
+    "Shipshape"
+  ],
+  "directionNotes": [
+    "First round, no prior likes. Mix of plain, commanding, playful, invented.",
+    "Round 2, biased toward round-1 likes (Docket, Tidy, Soon, Muster, Tada): short plain words, punchy verbs, done-energy.",
+    "Round 3. Round 2 (punchy verbs) was cancelled with no picks, pivoting back toward round-1 likes (Docket, Tidy, Soon, Muster, Tada): calm establishment nouns, tidy words, keepers of order.",
+    "Availability check 2026-09-07: Soon decent, Neat decent, Muster/Tada/Brief/Tidy/Memo bad, Docket/Steward terrible. All nine taken on npm (scoped package needed). Only free TLD found: soon.me, steward.io (irrelevant).",
+    "Round 4, biased toward full kept list (Docket, Tidy, Soon, Muster, Tada, Brief, Neat, Memo, Steward) and user's Soon-like ask: short time-words and quiet plain words nobody has productized.",
+    "User removed Shipshape (round-4 pick), wants more names. Round 5: Brief-siblings, done-energy, old-timey, naval.",
+    "Round 5. Shipshape was removed by user. Threads that landed: Brief-siblings, done-energy, old-timey words, naval crew. 12 fresh names, no repeats.",
+    "Round 6. User direction: excitement to get stuff done, organizing life, making a change, having impact. High-energy momentum words.",
+    "Round 7. User wants playful and creative, grounded (celebrations/grins/punch) not fantasy. Tada landed before, Golem/Genie did not.",
+    "Round 8. User correction: playful but NOT hippie. Dry wit and sharp, understated. No flower-power.",
+    "Round 9. User: less jokey, momentum/action like Rally/Succeed/Go. Get the ball rolling, not grinning. Rally included at user direction despite known Broadcom collision.",
+    "SCORES 2026-09-07 (survives rewrites; see liked[].score too): decent=Soon, Neat; bad=Tada, Muster, Soar, Outset, Brief, Tidy, Memo; terrible=Docket, Steward, Rally. All twelve taken on npm (scoped package needed). Free TLDs found: soon.me, outset.sh."
+  ]
+}

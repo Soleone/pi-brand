@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
+import { isAvailabilityScore } from "./scoring.ts";
 import { emptyBrandState, type BrandRound, type BrandState, type Candidate } from "./types.ts";
+
+const isScore = isAvailabilityScore;
 
 export interface LoadedBrandState {
   state: BrandState;
@@ -167,6 +170,9 @@ function normalizeState(raw: unknown): BrandState | undefined {
         style: typeof candidate.style === "string" ? candidate.style : undefined,
         roundId: typeof candidate.roundId === "string" ? candidate.roundId : undefined,
         likedAt: typeof candidate.likedAt === "string" ? candidate.likedAt : new Date().toISOString(),
+        // Scores must survive reloads: never drop them when normalizing.
+        score: isScore(candidate.score) ? candidate.score : undefined,
+        scoreReason: typeof candidate.scoreReason === "string" ? candidate.scoreReason : undefined,
       });
     }
   }
@@ -200,6 +206,8 @@ function normalizeRound(entry: unknown): BrandRound | undefined {
           name: candidate.name.trim(),
           flavor: typeof candidate.flavor === "string" ? candidate.flavor : undefined,
           style: typeof candidate.style === "string" ? candidate.style : undefined,
+          score: isScore(candidate.score) ? candidate.score : undefined,
+          scoreReason: typeof candidate.scoreReason === "string" ? candidate.scoreReason : undefined,
         });
       }
     }

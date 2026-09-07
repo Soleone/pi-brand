@@ -1,6 +1,6 @@
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Key, matchesKey, Text } from "@earendil-works/pi-tui";
+import { Container, Key, matchesKey, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { formatScore } from "./scoring.ts";
 import type { Candidate } from "./types.ts";
@@ -8,11 +8,43 @@ import type { Candidate } from "./types.ts";
 export interface PickOptions {
   title?: string;
   product?: string;
+  /** Names kept from earlier rounds, shown so picks read as accumulating, not resetting. */
+  likedSoFar?: string[];
 }
 
 type PickerContext = ExtensionContext | ExtensionCommandContext;
 
 const PAGE_SIZE = 10;
+
+// Nerd Font icons (single cell in a patched font). The checkbox pair saves
+// two columns over the old `[ ]` / `[x]` style and the table stays aligned.
+const ICON_CHECKED = "󰄵";
+const ICON_UNCHECKED = "󰄱";
+const ICON_CURSOR = "❯";
+const ICON_HEART = "";
+const ICON_SEARCH = "";
+
+function padEndVisible(text: string, width: number): string {
+  const w = visibleWidth(text);
+  return w >= width ? text : text + " ".repeat(width - w);
+}
+
+type ScoreColor = "success" | "warning" | "error" | "dim";
+
+function scoreColor(score: string | undefined): ScoreColor {
+  switch (score) {
+    case "perfect":
+    case "good":
+      return "success";
+    case "decent":
+      return "warning";
+    case "bad":
+    case "terrible":
+      return "error";
+    default:
+      return "dim";
+  }
+}
 
 /**
  * Multi-select picker for name candidates. Space toggles, Enter confirms,
@@ -33,13 +65,18 @@ export async function pickNames(
   }
 
   const title = options.title ?? "Pick favorites";
-  const alreadyLiked = new Set<string>();
+  const alreadyLiked = new Set((options.likedSoFar ?? []).map((name) => name.toLocaleLowerCase()));
+  const keptNames = (options.likedSoFar ?? []).map((name) => name.trim()).filter(Boolean);
+
+  // Fixed column widths so rows stay aligned while filtering.
+  const nameWidth = Math.max(4, ...candidates.map((c) => visibleWidth(c.name)));
+  const scoreWidth = Math.max(8, ...candidates.map((c) => visibleWidth(formatScore(c.score))));
 
   return await ui.custom<string[] | undefined>((tui, theme, _keybindings, done) => {
     const container = new Container();
     const headerLine = new Text("", 1, 0);
     const filterLine = new Text("", 1, 0);
-    const listArea = new Text("", 1, 0);
+    const keptLine = new Text("", 1, 0);
     const footerLine = new Text("", 1, 0);
 
     let query = "";
@@ -75,47 +112,106 @@ export async function pickNames(
       if (cursor >= scroll + PAGE_SIZE) scroll = cursor - PAGE_SIZE + 1;
     };
 
+    const renderRow = (
+      candidate: Candidate,
+      active: boolean,
+      contentWidth: number,
+    ): string => {
+      const checked = selected.has(candidate.name);
+      const score = formatScore(candidate.score);
+
+      const cursorCell = active ? theme.fg("accent", ICON_CURSOR) : " ";
+      const checkCell = checked
+        ? theme.fg("success", ICON_CHECKED)
+        : theme.fg("dim", ICON_UNCHECKED);
+
+      const paddedName = padEndVisible(candidate.name, nameWidth);
+      const nameCell = active
+        ? theme.fg("accent", theme.bold(paddedName))
+        : checked
+          ? theme.fg("accent", paddedName)
+          : paddedName;
+
+      const paddedScore = padEndVisible(score, scoreWidth);
+      const scoreCell = theme.fg(scoreColor(candidate.score), paddedScore);
+
+      const liked = alreadyLiked.has(candidate.name.toLocaleLowerCase());
+      const styleSuffix = candidate.style ? `  ${theme.fg("dim", `· ${candidate.style}`)}` : "";
+      const heartSuffix = liked ? ` ${theme.fg("error", ICON_HEART)}` : "";
+      const suffixWidth = visibleWidth(
+        `${candidate.style ? `  · ${candidate.style}` : ""}${liked ? " ♥" : ""}`,
+      );
+
+      const prefixWidth = 1 + 1 + 1 + 1 + nameWidth + 2 + scoreWidth + 2;
+      const maxFlavor = Math.max(0, contentWidth - prefixWidth - suffixWidth);
+      let flavorCell = "";
+      if (candidate.flavor && maxFlavor > 0) {
+        const truncated = truncateToWidth(candidate.flavor, maxFlavor, "…");
+        flavorCell = theme.fg("muted", truncated);
+      }
+
+      return `${cursorCell} ${checkCell} ${nameCell}  ${scoreCell}  ${flavorCell}${styleSuffix}${heartSuffix}`;
+    };
+
+    // Custom list component so rows can truncate to the live viewport width
+    // instead of wrapping and breaking column alignment.
+    const listView = {
+      render: (width: number): string[] => {
+        const rows = filtered();
+        clampCursor(rows);
+        const contentWidth = Math.max(1, width - 2);
+        if (rows.length === 0) {
+          return [` ${theme.fg("warning", "No matches — backspace to clear the filter.")}`];
+        }
+        const visible = rows.slice(scroll, scroll + PAGE_SIZE);
+        const lines = visible.map((candidate, index) =>
+          ` ${renderRow(candidate, scroll + index === cursor, contentWidth)}`,
+        );
+        if (rows.length > PAGE_SIZE) {
+          lines.push(
+            ` ${theme.fg("dim", `${scroll + 1}–${scroll + visible.length} of ${rows.length}`)}`,
+          );
+        }
+        return lines;
+      },
+      invalidate: () => {},
+    };
+
     const render = (): void => {
       const rows = filtered();
       clampCursor(rows);
-      const visible = rows.slice(scroll, scroll + PAGE_SIZE);
 
       const picked = selected.size;
-      const header = options.product
-        ? `${title}  ·  ${options.product}  ·  ${picked} picked`
-        : `${title}  ·  ${picked} picked`;
-      headerLine.setText(theme.fg("accent", theme.bold(header)));
+      const countCell =
+        picked > 0
+          ? theme.fg("success", `${ICON_CHECKED} ${picked} picked`)
+          : theme.fg("dim", `${ICON_UNCHECKED} nothing picked yet`);
+      const header = theme.bold(title);
+      const productCell = options.product ? theme.fg("dim", `  ·  ${options.product}  ·  `) : theme.fg("dim", "  ·  ");
+      headerLine.setText(`${header}${productCell}${countCell}`);
+
+      const filterIcon = theme.fg("muted", `${ICON_SEARCH} `);
       filterLine.setText(
-        theme.fg("muted", "Filter  ") +
-          (query ? theme.fg("accent", query) : theme.fg("dim", "type to search")),
+        query
+          ? `${filterIcon}${query}${theme.fg("accent", "▍")}${theme.fg("dim", `  ·  ${rows.length}/${candidates.length}`)}`
+          : `${filterIcon}${theme.fg("dim", "type to filter…")}`,
       );
 
-      if (rows.length === 0) {
-        listArea.setText(theme.fg("warning", "No matches. Backspace to clear the filter."));
+      if (keptNames.length === 0) {
+        keptLine.setText("");
       } else {
-        const lines = visible.map((candidate, index) => {
-          const absolute = scroll + index;
-          const active = absolute === cursor;
-          const checked = selected.has(candidate.name);
-          const box = checked ? "[x]" : "[ ]";
-          const score = formatScore(candidate.score);
-          const flavor = candidate.flavor ? `  ${candidate.flavor}` : "";
-          const style = candidate.style ? `  (${candidate.style})` : "";
-          const mark = alreadyLiked.has(candidate.name.toLocaleLowerCase()) ? "  ♥" : "";
-          const line = `${box} ${candidate.name}  <${score}>${flavor}${style}${mark}`;
-          if (active) return theme.fg("accent", `▸ ${line}`);
-          if (checked) return theme.fg("accent", `  ${line}`);
-          return `  ${line}`;
-        });
-        const position =
-          rows.length > PAGE_SIZE
-            ? theme.fg("dim", `  ${scroll + 1}-${scroll + visible.length} of ${rows.length}`)
-            : "";
-        listArea.setText([...lines, position].filter(Boolean).join("\n"));
+        const shown = keptNames.slice(-12);
+        const prefix = keptNames.length > 12 ? `+${keptNames.length - 12} more · ` : "";
+        keptLine.setText(
+          `${theme.fg("error", ICON_HEART)} ${theme.fg("muted", `Kept (${keptNames.length}): `)}${theme.fg("text", `${prefix}${shown.join(", ")}`)}`,
+        );
       }
 
       footerLine.setText(
-        theme.fg("dim", "Space toggle · Enter confirm · Esc cancel · ↑↓ move"),
+        `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
+          `${theme.fg("muted", "⏎")} ${theme.fg("dim", "confirm")}  ${theme.fg("dim", "·")}  ` +
+          `${theme.fg("muted", "esc")} ${theme.fg("dim", "cancel")}  ${theme.fg("dim", "·")}  ` +
+          `${theme.fg("muted", "↑↓")} ${theme.fg("dim", "move")}`,
       );
       tui.requestRender();
     };
@@ -123,7 +219,8 @@ export async function pickNames(
     container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
     container.addChild(headerLine);
     container.addChild(filterLine);
-    container.addChild(listArea);
+    container.addChild(keptLine);
+    container.addChild(listView);
     container.addChild(footerLine);
     container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
     render();
@@ -161,13 +258,33 @@ export async function pickNames(
           }
           return;
         }
-        if (matchesKey(data, Key.up)) {
+        if (matchesKey(data, Key.up) || matchesKey(data, Key.ctrl("p"))) {
           cursor -= 1;
           render();
           return;
         }
-        if (matchesKey(data, Key.down)) {
+        if (matchesKey(data, Key.down) || matchesKey(data, Key.ctrl("n"))) {
           cursor += 1;
+          render();
+          return;
+        }
+        if (matchesKey(data, Key.pageUp)) {
+          cursor -= PAGE_SIZE;
+          render();
+          return;
+        }
+        if (matchesKey(data, Key.pageDown)) {
+          cursor += PAGE_SIZE;
+          render();
+          return;
+        }
+        if (matchesKey(data, Key.home)) {
+          cursor = 0;
+          render();
+          return;
+        }
+        if (matchesKey(data, Key.end)) {
+          cursor = Number.MAX_SAFE_INTEGER;
           render();
           return;
         }

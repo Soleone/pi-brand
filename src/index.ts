@@ -25,10 +25,11 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     name: "brand_pick",
     label: "Brand pick",
     description:
-      "Let the user multi-select favorite names from a shortlist. Call this after generating name candidates instead of asking the user to type numbers. Persists picks so later rounds stay on track.",
+      "Let the user multi-select favorite names from a shortlist. Call this after generating name candidates instead of asking the user to type numbers. Picks accumulate across rounds; the picker shows what is already kept.",
     promptSnippet: "After generating name candidates, call brand_pick so the user can select favorites in a picker UI.",
     promptGuidelines: [
       "Call brand_pick with 12-15 shortlisted candidates once per naming round.",
+      "After brand_pick returns, summarize the picks and WAIT for the user to confirm before any next round. Never call brand_pick twice in a row without user confirmation.",
       "Do not run npm, GitHub, DNS, or trademark checks before the user picks. Deep checks happen only on picks, in a later step.",
     ],
     parameters: BRAND_PICK_PARAMS,
@@ -64,6 +65,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         };
       }
 
+      const roundNumber = loaded.state.rounds.length + 1;
+      const keptBefore = loaded.state.liked.map((entry) => entry.name);
       const round = recordRound(loaded.state, {
         product,
         candidates,
@@ -88,8 +91,9 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       }
 
       const picks = await pickNames(ctx, candidates, {
-        title: "Brand  ·  pick favorites",
+        title: `Brand  ·  round ${roundNumber}  ·  pick favorites`,
         product: product || undefined,
+        likedSoFar: keptBefore,
       });
 
       if (!picks) {
@@ -113,16 +117,23 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       );
       saveBrandState(loaded.path, loaded.state);
 
+      const allLiked = loaded.state.liked.map((entry) => entry.name);
+      ctx.ui.notify(
+        added.length > 0
+          ? `Round ${roundNumber}: kept ${added.join(", ")}. Total kept (${allLiked.length}): ${allLiked.join(", ")}.`
+          : `Round ${roundNumber}: nothing new kept. Total kept (${allLiked.length}): ${allLiked.join(", ") || "(none)"}.`,
+        "info",
+      );
+
       return {
         content: [
           {
             type: "text",
             text: [
-              `brand_pick: user liked ${added.length > 0 ? added.join(", ") : "(nothing new)"}.`,
-              `All likes so far: ${loaded.state.liked.map((entry) => entry.name).join(", ") || "(none)"}.`,
-              added.length > 0
-                ? "Bias the next round toward this vibe. Do not repeat seen names."
-                : "Ask for direction notes (e.g. more like X, less cute) and generate a fresh round.",
+              `brand_pick round ${roundNumber}: user picked ${added.length > 0 ? added.join(", ") : "(nothing new this round)"}.`,
+              `Kept across all rounds (accumulates, never resets): ${allLiked.join(", ") || "(none)"}.`,
+              "STOP after this message: tell the user what was kept this round and the full kept list, then ask which direction to push next (e.g. more like X, less Y) and whether to run another round.",
+              "Do NOT call brand_pick again until the user explicitly confirms another round. One picker at a time. Do not repeat seen names.",
             ].join("\n"),
           },
         ],
