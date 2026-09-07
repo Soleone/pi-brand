@@ -4,8 +4,14 @@ import path from "node:path";
 
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
-import { isAvailabilityScore } from "./scoring.ts";
-import { emptyBrandState, type BrandRound, type BrandState, type Candidate } from "./types.ts";
+import { isAvailabilityScore, type CollisionSignals } from "./scoring.ts";
+import {
+  emptyBrandState,
+  type AvailabilityRecord,
+  type BrandRound,
+  type BrandState,
+  type Candidate,
+} from "./types.ts";
 
 const isScore = isAvailabilityScore;
 
@@ -138,6 +144,55 @@ export function addLikes(
   return added;
 }
 
+/** Cache key for an availability record: case-insensitive, whitespace-trimmed. */
+export function availabilityKey(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
+/** Cached availability for a name, if it was ever deep-checked. */
+export function getAvailability(state: BrandState, name: string): AvailabilityRecord | undefined {
+  const key = availabilityKey(name);
+  if (!key) return undefined;
+  return state.availability[key];
+}
+
+/**
+ * Record an availability result forever and backfill it onto every matching
+ * liked entry and round candidate, so the score shows up everywhere the name
+ * appears without any re-check.
+ */
+export function recordAvailability(
+  state: BrandState,
+  name: string,
+  input: { score: AvailabilityRecord["score"]; reason: string; signals?: CollisionSignals },
+): AvailabilityRecord {
+  const trimmed = name.trim();
+  const record: AvailabilityRecord = {
+    score: input.score,
+    reason: input.reason,
+    signals: input.signals,
+    checkedAt: new Date().toISOString(),
+  };
+  state.availability[availabilityKey(trimmed)] = record;
+  const matches = (other: string): boolean =>
+    other.trim().toLocaleLowerCase() === availabilityKey(trimmed);
+  for (const entry of state.liked) {
+    if (matches(entry.name)) {
+      entry.score = record.score;
+      entry.scoreReason = record.reason;
+    }
+  }
+  for (const round of state.rounds) {
+    for (const candidate of round.candidates) {
+      if (matches(candidate.name)) {
+        candidate.score = record.score;
+        candidate.scoreReason = record.reason;
+      }
+    }
+  }
+  return record;
+}
+
 /** Names seen in any round, lowercased, so new rounds avoid repeats. */
 export function seenNames(state: BrandState): Set<string> {
   const seen = new Set<string>();
@@ -186,7 +241,35 @@ function normalizeState(raw: unknown): BrandState | undefined {
       if (typeof note === "string" && note.trim()) state.directionNotes.push(note.trim());
     }
   }
+  if (record.availability && typeof record.availability === "object" && !Array.isArray(record.availability)) {
+    for (const [rawKey, rawEntry] of Object.entries(record.availability)) {
+      const key = availabilityKey(rawKey);
+      if (!key || !rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
+      const entry = rawEntry as Record<string, unknown>;
+      if (!isScore(entry.score)) continue;
+      state.availability[key] = {
+        score: entry.score,
+        reason: typeof entry.reason === "string" && entry.reason ? entry.reason : entry.score,
+        signals: isCollisionSignals(entry.signals) ? entry.signals : undefined,
+        checkedAt: typeof entry.checkedAt === "string" ? entry.checkedAt : new Date().toISOString(),
+      };
+    }
+  }
   return state;
+}
+
+/** Guard for cached collision signals: all-or-nothing, never half-trusted. */
+function isCollisionSignals(value: unknown): value is CollisionSignals {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const signals = value as Record<string, unknown>;
+  return (
+    typeof signals.famousCollision === "boolean" &&
+    typeof signals.sameSpaceCollision === "boolean" &&
+    typeof signals.giantAssociation === "boolean" &&
+    typeof signals.unrelatedCount === "number" &&
+    Number.isFinite(signals.unrelatedCount) &&
+    typeof signals.comParked === "boolean"
+  );
 }
 
 function normalizeRound(entry: unknown): BrandRound | undefined {

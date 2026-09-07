@@ -7,7 +7,8 @@ import type { BrandState } from "./types.ts";
  */
 export function buildBrandContext(state: BrandState, maxLiked = 20): string | undefined {
   const liked = state.liked.slice(-maxLiked).map((entry) => entry.name);
-  if (liked.length === 0 && state.directionNotes.length === 0) return undefined;
+  const hasAvailability = Object.keys(state.availability).length > 0;
+  if (liked.length === 0 && state.directionNotes.length === 0 && !hasAvailability) return undefined;
 
   const parts: string[] = ["[brand] naming direction so far:"];
   if (state.product) parts.push(`Product: ${state.product}`);
@@ -16,6 +17,13 @@ export function buildBrandContext(state: BrandState, maxLiked = 20): string | un
   }
   if (state.dismissed.length > 0) {
     parts.push(`Avoid (already rejected): ${state.dismissed.slice(-20).join(", ")}`);
+  }
+  const checked = Object.entries(state.availability);
+  if (checked.length > 0) {
+    const rendered = checked.slice(-20).map(([name, entry]) => `${name} (${entry.score})`);
+    parts.push(
+      `Availability-checked (already researched in this project, NEVER re-check, trust these): ${rendered.join(", ")}`,
+    );
   }
   if (state.directionNotes.length > 0) {
     parts.push(`Direction notes: ${state.directionNotes.slice(-5).join(" | ")}`);

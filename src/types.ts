@@ -1,4 +1,4 @@
-import type { AvailabilityScore } from "./scoring.ts";
+import type { AvailabilityScore, CollisionSignals } from "./scoring.ts";
 
 /** One generated name candidate. */
 export interface Candidate {
@@ -31,6 +31,15 @@ export interface LikedName {
   scoreReason?: string;
 }
 
+/** One availability deep-check result, cached forever so a name is never researched twice. */
+export interface AvailabilityRecord {
+  score: AvailabilityScore;
+  reason: string;
+  /** The raw collision signals behind the score, kept for audit. */
+  signals?: CollisionSignals;
+  checkedAt: string;
+}
+
 /** Persisted brand state for one product (one file per project). */
 export interface BrandState {
   version: 1;
@@ -40,6 +49,8 @@ export interface BrandState {
   liked: LikedName[];
   dismissed: string[];
   directionNotes: string[];
+  /** Availability cache, keyed by lowercased name. Survives across sessions. */
+  availability: Record<string, AvailabilityRecord>;
 }
 
 export function emptyBrandState(product = ""): BrandState {
@@ -51,5 +62,6 @@ export function emptyBrandState(product = ""): BrandState {
     liked: [],
     dismissed: [],
     directionNotes: [],
+    availability: {},
   };
 }

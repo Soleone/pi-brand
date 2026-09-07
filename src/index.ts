@@ -3,7 +3,15 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import { pickNames } from "./picker.ts";
 import { buildBrandContext, buildRoundPrompt } from "./prompt.ts";
-import { addLikes, loadBrandState, recordRound, saveBrandState } from "./store.ts";
+import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
+import {
+  addLikes,
+  getAvailability,
+  loadBrandState,
+  recordAvailability,
+  recordRound,
+  saveBrandState,
+} from "./store.ts";
 import type { Candidate } from "./types.ts";
 
 const CANDIDATE_SCHEMA = Type.Object({
@@ -20,6 +28,34 @@ const BRAND_PICK_PARAMS = Type.Object({
   directionHint: Type.Optional(Type.String({ description: "Direction note for this round" })),
 });
 
+const BRAND_SCORE_PARAMS = Type.Object({
+  name: Type.String({ description: "Name to look up or record availability for" }),
+  famousCollision: Type.Optional(
+    Type.Boolean({ description: "Famous product or brand in any space" }),
+  ),
+  sameSpaceCollision: Type.Optional(
+    Type.Boolean({ description: "Active business in the same or adjacent space on .com" }),
+  ),
+  giantAssociation: Type.Optional(
+    Type.Boolean({ description: "Strong association with an unrelated giant" }),
+  ),
+  unrelatedCount: Type.Optional(Type.Number({ description: "Count of unrelated collisions" })),
+  comParked: Type.Optional(
+    Type.Boolean({ description: ".com parked or for sale with no product" }),
+  ),
+  force: Type.Optional(Type.Boolean({ description: "Overwrite an existing cached result" })),
+});
+
+interface BrandScoreParams {
+  name: string;
+  famousCollision?: boolean;
+  sameSpaceCollision?: boolean;
+  giantAssociation?: boolean;
+  unrelatedCount?: number;
+  comParked?: boolean;
+  force?: boolean;
+}
+
 export default function registerPiBrand(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "brand_pick",
@@ -30,6 +66,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Call brand_pick with 12-15 shortlisted candidates once per naming round.",
       "After brand_pick returns, summarize the picks and WAIT for the user to confirm before any next round. Never call brand_pick twice in a row without user confirmation.",
+      "If brand_pick reports a whole-round rejection, confirm it, steer by the attached note, and never suggest dismissed names again.",
+      "When deep-checking picks, call brand_score with just the name first: a cached result was already researched in this project, trust it and never search twice. Research only uncached names, then record each via brand_score with the collision signals.",
       "Do not run npm, GitHub, DNS, or trademark checks before the user picks. Deep checks happen only on picks, in a later step.",
     ],
     parameters: BRAND_PICK_PARAMS,
@@ -55,6 +93,15 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         }))
         .filter((item) => item.name.length > 0)
         .slice(0, 30);
+
+      // Attach cached availability so re-seen names show their score with no re-check.
+      for (const candidate of candidates) {
+        const hit = getAvailability(loaded.state, candidate.name);
+        if (hit) {
+          candidate.score = hit.score;
+          candidate.scoreReason = hit.reason;
+        }
+      }
 
       const product = params.product?.trim() || loaded.state.product;
 
@@ -90,13 +137,13 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         };
       }
 
-      const picks = await pickNames(ctx, candidates, {
+      const outcome = await pickNames(ctx, candidates, {
         title: `Brand  ·  round ${roundNumber}  ·  pick favorites`,
         product: product || undefined,
         likedSoFar: keptBefore,
       });
 
-      if (!picks) {
+      if (!outcome) {
         saveBrandState(loaded.path, loaded.state);
         return {
           content: [
@@ -109,6 +156,42 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         };
       }
 
+      if (outcome.kind === "rejected") {
+        const names = outcome.names.map((name) => name.trim()).filter(Boolean);
+        const known = new Set(loaded.state.dismissed.map((name) => name.toLocaleLowerCase()));
+        let fresh = 0;
+        for (const name of names) {
+          if (known.has(name.toLocaleLowerCase())) continue;
+          known.add(name.toLocaleLowerCase());
+          loaded.state.dismissed.push(name);
+          fresh += 1;
+        }
+        const comment = outcome.comment.trim();
+        if (comment) loaded.state.directionNotes.push(comment);
+        saveBrandState(loaded.path, loaded.state);
+
+        ctx.ui.notify(
+          `Round ${roundNumber}: rejected all ${names.length} (${fresh} new)${comment ? ` with note: ${comment}` : ""}. They won't be suggested again.`,
+          "info",
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `brand_pick round ${roundNumber}: user rejected ALL ${names.length} candidates${comment ? ` with note: ${comment}` : " (no note given)"}.`,
+                `Dismissed (never suggest again): ${loaded.state.dismissed.slice(-30).join(", ")}.`,
+                "Tell the user the round was rejected and confirm the note, then ask whether to run a fresh round in that direction.",
+                "Do NOT call brand_pick again until the user explicitly confirms. Do not repeat seen names.",
+              ].join("\n"),
+            },
+          ],
+          details: { roundId: round.id, picked: [] as string[], rejected: names, rejectComment: comment },
+        };
+      }
+
+      const picks = outcome.names;
       const byName = new Map(candidates.map((candidate) => [candidate.name, candidate]));
       const added = addLikes(
         loaded.state,
@@ -132,12 +215,120 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
             text: [
               `brand_pick round ${roundNumber}: user picked ${added.length > 0 ? added.join(", ") : "(nothing new this round)"}.`,
               `Kept across all rounds (accumulates, never resets): ${allLiked.join(", ") || "(none)"}.`,
+              "When deep-checking picks: first call brand_score with just each name. A cached result was already researched in this project, trust it and never search twice. Research only uncached names (npm, GitHub, DNS, web), then record each via brand_score with the collision signals.",
               "STOP after this message: tell the user what was kept this round and the full kept list, then ask which direction to push next (e.g. more like X, less Y) and whether to run another round.",
               "Do NOT call brand_pick again until the user explicitly confirms another round. One picker at a time. Do not repeat seen names.",
             ].join("\n"),
           },
         ],
         details: { roundId: round.id, picked: added },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "brand_score",
+    label: "Brand score",
+    description:
+      "Look up or record a name availability deep-check. Call with just a name first: a cached result means it was already researched, trust it and do not search again. Call with collision signals after fresh research to save the result forever.",
+    promptSnippet:
+      "Before availability deep-checking any name, call brand_score with just its name to consult the cache.",
+    promptGuidelines: [
+      "Always call brand_score with just the name before researching availability. Cached results are final, never re-search them.",
+      "After fresh research, call brand_score again with the collision signals so the result is saved and never researched twice.",
+    ],
+    parameters: BRAND_SCORE_PARAMS,
+    async execute(_toolCallId, params: BrandScoreParams, _signal, _onUpdate, ctx) {
+      const loaded = loadBrandState(ctx.cwd, ctx.isProjectTrusted());
+      for (const warning of loaded.warnings) ctx.ui.notify(warning, "warning");
+
+      const name = params.name?.trim() ?? "";
+      if (!name) {
+        return {
+          content: [{ type: "text", text: "brand_score: pass a name to look up or record." }],
+          details: { name: "", cached: false },
+        };
+      }
+
+      const hasSignals =
+        params.famousCollision !== undefined ||
+        params.sameSpaceCollision !== undefined ||
+        params.giantAssociation !== undefined ||
+        params.unrelatedCount !== undefined ||
+        params.comParked !== undefined;
+      const cached = getAvailability(loaded.state, name);
+
+      // Lookup: name only, no signals.
+      if (!hasSignals) {
+        if (cached) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: [
+                  `brand_score: ${name} is already checked in this project: ${cached.score} (${cached.reason}; checked ${cached.checkedAt}).`,
+                  "Trust this result. Do NOT research this name again.",
+                ].join("\n"),
+              },
+            ],
+            details: { name, cached: true, score: cached.score, reason: cached.reason },
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `brand_score: ${name} is not checked yet in this project.`,
+                "Research it now (npm, GitHub, DNS, web), then call brand_score again with the collision signals to save the result.",
+              ].join("\n"),
+            },
+          ],
+          details: { name, cached: false },
+        };
+      }
+
+      // Record: signals provided.
+      if (cached && !params.force) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `brand_score: ${name} is already recorded as ${cached.score} (${cached.reason}; checked ${cached.checkedAt}).`,
+                "Your fresh signals were NOT saved. Trust the cached result, or repeat with force true to overwrite it.",
+              ].join("\n"),
+            },
+          ],
+          details: { name, cached: true, score: cached.score, reason: cached.reason },
+        };
+      }
+
+      const rawCount = params.unrelatedCount ?? 0;
+      const signals: CollisionSignals = {
+        famousCollision: params.famousCollision ?? false,
+        sameSpaceCollision: params.sameSpaceCollision ?? false,
+        giantAssociation: params.giantAssociation ?? false,
+        unrelatedCount:
+          typeof rawCount === "number" && Number.isFinite(rawCount) ? Math.max(0, Math.floor(rawCount)) : 0,
+        comParked: params.comParked ?? false,
+      };
+      const { score, reason } = scoreFromSignals(signals);
+      const saved = recordAvailability(loaded.state, name, { score, reason, signals });
+      saveBrandState(loaded.path, loaded.state);
+      ctx.ui.notify(`Availability recorded: ${name} is ${score} (${reason}).`, "info");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: [
+              `brand_score: recorded ${name} as ${score} (${reason}).`,
+              "This result is saved in this project forever. Neither you nor any future session needs to research this name again.",
+            ].join("\n"),
+          },
+        ],
+        details: { name, cached: false, score: saved.score, reason: saved.reason },
       };
     },
   });
@@ -170,7 +361,21 @@ async function runBrandCommand(
   const sub = (head ?? "").toLocaleLowerCase();
 
   if (sub === "likes" || sub === "liked" || sub === "status") {
-    showLikes(ctx, loaded.state.liked.map((entry) => entry.name));
+    showLikes(ctx, loaded.state.liked);
+    return;
+  }
+
+  if (sub === "check") {
+    if (!tail) {
+      ctx.ui.notify("Usage: /brand check <name>", "warning");
+      return;
+    }
+    const hit = getAvailability(loaded.state, tail);
+    if (hit) {
+      ctx.ui.notify(`${tail}: ${hit.score} — ${hit.reason} (checked ${hit.checkedAt}).`, "info");
+    } else {
+      ctx.ui.notify(`${tail}: not availability-checked yet in this project.`, "info");
+    }
     return;
   }
 
@@ -189,6 +394,7 @@ async function runBrandCommand(
       liked: [],
       dismissed: [],
       directionNotes: [],
+      availability: {},
     });
     ctx.ui.notify("Brand state cleared.", "info");
     return;
@@ -235,10 +441,14 @@ async function runBrandCommand(
   pi.sendUserMessage(buildRoundPrompt(product, loaded.state));
 }
 
-function showLikes(ctx: ExtensionCommandContext, liked: string[]): void {
+function showLikes(
+  ctx: ExtensionCommandContext,
+  liked: Array<{ name: string; score?: string }>,
+): void {
   if (liked.length === 0) {
     ctx.ui.notify("No liked names yet. Run /brand to start a round.", "info");
     return;
   }
-  ctx.ui.notify(`Liked (${liked.length}): ${liked.join(", ")}`, "info");
+  const rendered = liked.map((entry) => (entry.score ? `${entry.name} (${entry.score})` : entry.name));
+  ctx.ui.notify(`Liked (${liked.length}): ${rendered.join(", ")}`, "info");
 }

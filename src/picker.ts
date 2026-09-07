@@ -14,6 +14,11 @@ export interface PickOptions {
 
 type PickerContext = ExtensionContext | ExtensionCommandContext;
 
+/** What the picker resolved to: keeps, a whole-round rejection, or cancel. */
+export type PickOutcome =
+  | { kind: "picked"; names: string[] }
+  | { kind: "rejected"; names: string[]; comment: string };
+
 const PAGE_SIZE = 10;
 
 // Nerd Font icons (single cell in a patched font). The checkbox pair saves
@@ -47,15 +52,16 @@ function scoreColor(score: string | undefined): ScoreColor {
 }
 
 /**
- * Multi-select picker for name candidates. Space toggles, Enter confirms,
- * Esc cancels. Typing filters. If nothing is toggled, Enter picks the
- * highlighted row so a single favorite is one keypress.
+ * Multi-select picker for name candidates. Space toggles, Enter confirms the
+ * toggled picks. Typing filters. Enter with nothing toggled and Esc open the
+ * react prompt instead (type a note, Enter rejects the round, Esc backs out).
+ * Enter never auto-picks the highlighted row. Ctrl+R also opens the prompt.
  */
 export async function pickNames(
   ctx: PickerContext,
   candidates: Candidate[],
   options: PickOptions = {},
-): Promise<string[] | undefined> {
+): Promise<PickOutcome | undefined> {
   if (candidates.length === 0) return undefined;
   if (!ctx.hasUI) return undefined;
 
@@ -72,7 +78,7 @@ export async function pickNames(
   const nameWidth = Math.max(4, ...candidates.map((c) => visibleWidth(c.name)));
   const scoreWidth = Math.max(8, ...candidates.map((c) => visibleWidth(formatScore(c.score))));
 
-  return await ui.custom<string[] | undefined>((tui, theme, _keybindings, done) => {
+  return await ui.custom<PickOutcome | undefined>((tui, theme, _keybindings, done) => {
     const container = new Container();
     const headerLine = new Text("", 1, 0);
     const filterLine = new Text("", 1, 0);
@@ -84,8 +90,10 @@ export async function pickNames(
     let scroll = 0;
     const selected = new Set<string>();
     let finished = false;
+    let rejecting = false;
+    let rejectNote = "";
 
-    const finish = (value: string[] | undefined): void => {
+    const finish = (value: PickOutcome | undefined): void => {
       if (finished) return;
       finished = true;
       done(value);
@@ -207,12 +215,30 @@ export async function pickNames(
         );
       }
 
-      footerLine.setText(
-        `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
-          `${theme.fg("muted", "⏎")} ${theme.fg("dim", "confirm")}  ${theme.fg("dim", "·")}  ` +
-          `${theme.fg("muted", "esc")} ${theme.fg("dim", "cancel")}  ${theme.fg("dim", "·")}  ` +
-          `${theme.fg("muted", "↑↓")} ${theme.fg("dim", "move")}`,
-      );
+      if (rejecting) {
+        const prompt =
+          rejectNote.length > 0
+            ? `${rejectNote}${theme.fg("warning", "▍")}`
+            : theme.fg("dim", "why are they all wrong? (optional)");
+        const escHint = rejectNote.length > 0 ? "esc back" : "esc cancel";
+        footerLine.setText(
+          `${theme.fg("warning", `Reject all ${candidates.length} — nothing kept from this round.`)}\n` +
+            `${theme.fg("muted", "> ")}${prompt}  ${theme.fg("dim", `·  ⏎ reject  ·  ${escHint}`)}`,
+        );
+      } else if (selected.size > 0) {
+        footerLine.setText(
+          `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
+            `${theme.fg("muted", "⏎")} ${theme.fg("dim", `confirm (${selected.size})`)}  ${theme.fg("dim", "·")}  ` +
+            `${theme.fg("muted", "esc")} ${theme.fg("dim", "react with a note")}  ${theme.fg("dim", "·")}  ` +
+            `${theme.fg("muted", "↑↓")} ${theme.fg("dim", "move")}`,
+        );
+      } else {
+        footerLine.setText(
+          `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
+            `${theme.fg("muted", "⏎/esc")} ${theme.fg("dim", "react with a note")}  ${theme.fg("dim", "·")}  ` +
+            `${theme.fg("muted", "↑↓")} ${theme.fg("dim", "move")}`,
+        );
+      }
       tui.requestRender();
     };
 
@@ -229,8 +255,51 @@ export async function pickNames(
       render: (width) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data) => {
+        if (rejecting) {
+          if (matchesKey(data, Key.escape)) {
+            if (rejectNote.length === 0) {
+              finish(undefined);
+            } else {
+              rejecting = false;
+              rejectNote = "";
+              render();
+            }
+            return;
+          }
+          if (matchesKey(data, Key.enter)) {
+            finish({
+              kind: "rejected",
+              names: candidates.map((c) => c.name),
+              comment: rejectNote.trim(),
+            });
+            return;
+          }
+          if (matchesKey(data, Key.backspace)) {
+            rejectNote = rejectNote.slice(0, -1);
+            render();
+            return;
+          }
+          if (matchesKey(data, Key.ctrl("u"))) {
+            rejectNote = "";
+            render();
+            return;
+          }
+          if (/^[\x20-\x7e]+$/.test(data)) {
+            rejectNote += data;
+            render();
+          }
+          return;
+        }
         if (matchesKey(data, Key.escape)) {
-          finish(undefined);
+          rejecting = true;
+          rejectNote = "";
+          render();
+          return;
+        }
+        if (matchesKey(data, Key.ctrl("r"))) {
+          rejecting = true;
+          rejectNote = "";
+          render();
           return;
         }
         if (matchesKey(data, Key.enter)) {
@@ -240,11 +309,16 @@ export async function pickNames(
             return;
           }
           if (selected.size === 0) {
-            finish([rows[cursor]?.name ?? rows[0].name]);
+            rejecting = true;
+            rejectNote = "";
+            render();
             return;
           }
           // Preserve candidate order in the result.
-          finish(candidates.map((c) => c.name).filter((name) => selected.has(name)));
+          finish({
+            kind: "picked",
+            names: candidates.map((c) => c.name).filter((name) => selected.has(name)),
+          });
           return;
         }
         if (data === " ") {
@@ -319,12 +393,12 @@ export async function pickNames(
 async function confirmLoopFallback(
   ctx: PickerContext,
   candidates: Candidate[],
-): Promise<string[] | undefined> {
+): Promise<PickOutcome | undefined> {
   const picks: string[] = [];
   for (const candidate of candidates) {
     const label = candidate.flavor ? `${candidate.name} (${candidate.flavor})` : candidate.name;
     const yes = await ctx.ui.confirm("Like this name?", label);
     if (yes) picks.push(candidate.name);
   }
-  return picks;
+  return { kind: "picked", names: picks };
 }
