@@ -7,21 +7,36 @@ multi-select UI, likes persist across rounds so later searches stay on track.
 
 1. `/brand <what the app does>` starts a round. The agent generates 20
    candidates, filters to 12-15 survivors, then calls the `brand_pick` tool.
-2. The picker UI opens: **Space** toggles, **Enter** confirms,
-   **Esc** cancels, typing filters. If nothing is toggled, Enter picks the
-   highlighted row.
-3. Picks are saved to `.pi/brand.json` (project-local when trusted, global
-   fallback otherwise) and injected into later turns, so new rounds bias
-   toward the liked vibe and never repeat seen names.
+2. The picker opens. **Space** toggles a pick, **typing** filters, **↑↓**
+   moves, **Esc** opens the react prompt (a note, **⏎** rejects the whole
+   round, **Esc** on an empty note cancels).
+3. The `next` row in the picker is where the round ends, all one keypress:
+   - `⏎` keep the toggled picks and hand control back
+   - `1` more names, same direction
+   - `2` new direction: type the note, **⏎** generates (empty note = same direction)
+   - `3` availability deep-check of the shortlist, with the unchecked count
+     shown, so you can see what it will cost before pressing it
+   `1`/`2`/`3` keep whatever is toggled first, and queue the next step
+   immediately. Digits are free because candidates never contain digits.
+4. State lives in `.pi/brand.json` (project-local when trusted, global
+   fallback otherwise) and is injected into later turns, so new rounds bias
+   toward the liked vibe, never repeat seen names, and never re-research a
+   name.
 
 ## Commands
 
+Same steps from the keyboard, for when the picker is already closed:
+
 - `/brand <description>` start a naming round
-- `/brand likes` show liked names (with scores once checked)
-- `/brand check <name>` show the cached availability result for a name
+- `/brand more` another shortlist, same direction (no re-explaining)
+- `/brand pivot <note>` change direction, straight into a new shortlist
+- `/brand check` availability deep-check of everything kept, cache first
+- `/brand check <name>` cached availability for one name
+- `/brand likes` kept names (with scores once checked)
 - `/brand note <text>` add a direction note (e.g. more like X, less cute)
 - `/brand dismiss <name>` reject a name for future rounds
 - `/brand clear` wipe rounds, likes, notes, and cached availability
+- `/brand help` the list above
 
 ## Availability score (never researched twice)
 

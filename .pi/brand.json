@@ -1,7 +1,7 @@
 {
   "version": 1,
   "product": "a todo list for the agentic age, similarly to omarchy linux",
-  "updatedAt": "2026-09-07T06:17:14.837Z",
+  "updatedAt": "2026-09-07T07:28:01.724Z",
   "rounds": [
     {
       "id": "r1-mtqr254j",
@@ -659,6 +659,190 @@
           "style": "playful"
         }
       ]
+    },
+    {
+      "id": "r10-mtqvylzg",
+      "createdAt": "2026-09-07T06:55:01.324Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 10. Momentum vein nearly dry after 93 seen names. Last solid finds (Underway, Sally) plus disclosed rescues. If empty, recommend checking R9's unchecked nine over an 11th round.",
+      "candidates": [
+        {
+          "name": "Underway",
+          "flavor": "projects underway",
+          "style": "plain"
+        },
+        {
+          "name": "Sally",
+          "flavor": "sally forth",
+          "style": "plain"
+        },
+        {
+          "name": "Foray",
+          "flavor": "a fresh foray",
+          "style": "plain"
+        },
+        {
+          "name": "Launch",
+          "flavor": "launch the day",
+          "style": "plain"
+        },
+        {
+          "name": "Forward",
+          "flavor": "forward",
+          "style": "plain"
+        },
+        {
+          "name": "Hasten",
+          "flavor": "make haste",
+          "style": "plain"
+        },
+        {
+          "name": "Lunge",
+          "flavor": "lunge at it",
+          "style": "plain"
+        },
+        {
+          "name": "Pounce",
+          "flavor": "pounce on it",
+          "style": "playful"
+        },
+        {
+          "name": "Revamp",
+          "flavor": "revamp everything",
+          "style": "plain"
+        },
+        {
+          "name": "Elan",
+          "flavor": "with elan",
+          "style": "playful"
+        },
+        {
+          "name": "Flair",
+          "flavor": "with flair",
+          "style": "playful"
+        },
+        {
+          "name": "Attune",
+          "flavor": "attune your day",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r11-mtqwni71",
+      "createdAt": "2026-09-07T07:14:22.813Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 11. User: more from existing directions. Past/verb forms of kept names plus two fresh establishment nouns (Minutes, Dossier).",
+      "candidates": [
+        {
+          "name": "Minutes",
+          "flavor": "meeting notes",
+          "style": "plain"
+        },
+        {
+          "name": "Dossier",
+          "flavor": "case files",
+          "style": "plain"
+        },
+        {
+          "name": "Sorted",
+          "flavor": "sorted",
+          "style": "plain"
+        },
+        {
+          "name": "Tidied",
+          "flavor": "all tidied",
+          "style": "plain"
+        },
+        {
+          "name": "Neaten",
+          "flavor": "neaten up",
+          "style": "plain"
+        },
+        {
+          "name": "Briefed",
+          "flavor": "briefed",
+          "style": "plain"
+        },
+        {
+          "name": "Stewarded",
+          "flavor": "stewarded",
+          "style": "plain"
+        },
+        {
+          "name": "Mustered",
+          "flavor": "mustered",
+          "style": "plain"
+        },
+        {
+          "name": "Rallied",
+          "flavor": "rallied",
+          "style": "plain"
+        },
+        {
+          "name": "Forayed",
+          "flavor": "forayed",
+          "style": "plain"
+        },
+        {
+          "name": "Clerked",
+          "flavor": "clerked",
+          "style": "plain"
+        },
+        {
+          "name": "Rostered",
+          "flavor": "rostered",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r12-mtqx39vk",
+      "createdAt": "2026-09-07T07:26:38.528Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 12. Existing routes only, genuinely fresh words, no -ed wordplay, no padding. Short round on purpose.",
+      "candidates": [
+        {
+          "name": "Minutes",
+          "flavor": "meeting notes",
+          "style": "plain"
+        },
+        {
+          "name": "Dossier",
+          "flavor": "case files",
+          "style": "plain"
+        },
+        {
+          "name": "Desk",
+          "flavor": "todos live here",
+          "style": "plain"
+        },
+        {
+          "name": "Did",
+          "flavor": "did it",
+          "style": "plain"
+        },
+        {
+          "name": "Tack",
+          "flavor": "brass tacks",
+          "style": "plain"
+        },
+        {
+          "name": "Getgo",
+          "flavor": "from the get-go",
+          "style": "plain"
+        },
+        {
+          "name": "Gogetter",
+          "flavor": "go-getter",
+          "style": "plain"
+        },
+        {
+          "name": "Cando",
+          "flavor": "can-do",
+          "style": "plain"
+        }
+      ]
     }
   ],
   "liked": [
@@ -769,10 +953,35 @@
       "likedAt": "2026-09-07T06:17:14.836Z",
       "score": "bad",
       "scoreReason": "Outset (Parnassus Labs) YC-backed AI interview platform, $51M raised, OUTSET.AI trademark app filed 2026; funded same-AI-space collision; only outset.sh free"
+    },
+    {
+      "name": "Foray",
+      "flavor": "a fresh foray",
+      "style": "plain",
+      "roundId": "r10-mtqvylzg",
+      "likedAt": "2026-09-07T07:11:59.220Z"
     }
   ],
   "dismissed": [
-    "Shipshape"
+    "Shipshape",
+    "Minutes",
+    "Dossier",
+    "Sorted",
+    "Tidied",
+    "Neaten",
+    "Briefed",
+    "Stewarded",
+    "Mustered",
+    "Rallied",
+    "Forayed",
+    "Clerked",
+    "Rostered",
+    "Desk",
+    "Did",
+    "Tack",
+    "Getgo",
+    "Gogetter",
+    "Cando"
   ],
   "directionNotes": [
     "First round, no prior likes. Mix of plain, commanding, playful, invented.",
@@ -786,6 +995,12 @@
     "Round 7. User wants playful and creative, grounded (celebrations/grins/punch) not fantasy. Tada landed before, Golem/Genie did not.",
     "Round 8. User correction: playful but NOT hippie. Dry wit and sharp, understated. No flower-power.",
     "Round 9. User: less jokey, momentum/action like Rally/Succeed/Go. Get the ball rolling, not grinning. Rally included at user direction despite known Broadcom collision.",
-    "SCORES 2026-09-07 (survives rewrites; see liked[].score too): decent=Soon, Neat; bad=Tada, Muster, Soar, Outset, Brief, Tidy, Memo; terrible=Docket, Steward, Rally. All twelve taken on npm (scoped package needed). Free TLDs found: soon.me, outset.sh."
-  ]
+    "SCORES 2026-09-07 (survives rewrites; see liked[].score too): decent=Soon, Neat; bad=Tada, Muster, Soar, Outset, Brief, Tidy, Memo; terrible=Docket, Steward, Rally. All twelve taken on npm (scoped package needed). Free TLDs found: soon.me, outset.sh.",
+    "Round 10. Momentum vein nearly dry after 93 seen names. Last solid finds (Underway, Sally) plus disclosed rescues. If empty, recommend checking R9's unchecked nine over an 11th round.",
+    "Round 11. User: more from existing directions. Past/verb forms of kept names plus two fresh establishment nouns (Minutes, Dossier).",
+    "rally vs rallied, e.g. i dont know. need real variation, not just wordplay",
+    "Round 12. Existing routes only, genuinely fresh words, no -ed wordplay, no padding. Short round on purpose.",
+    "try others"
+  ],
+  "availability": {}
 }

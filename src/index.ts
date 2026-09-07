@@ -2,7 +2,13 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { pickNames } from "./picker.ts";
-import { buildBrandContext, buildRoundPrompt } from "./prompt.ts";
+import {
+  buildAvailabilityPrompt,
+  buildBrandContext,
+  buildMorePrompt,
+  buildPivotPrompt,
+  buildRoundPrompt,
+} from "./prompt.ts";
 import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
 import {
   addLikes,
@@ -61,11 +67,13 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     name: "brand_pick",
     label: "Brand pick",
     description:
-      "Let the user multi-select favorite names from a shortlist. Call this after generating name candidates instead of asking the user to type numbers. Picks accumulate across rounds; the picker shows what is already kept.",
+      "Let the user multi-select favorite names from a shortlist. Call this after generating name candidates instead of asking the user to type numbers. Picks accumulate across rounds, and the picker's action row queues the next step directly: 1 more names, 2 new direction, 3 availability check.",
     promptSnippet: "After generating name candidates, call brand_pick so the user can select favorites in a picker UI.",
     promptGuidelines: [
       "Call brand_pick with 12-15 shortlisted candidates once per naming round.",
-      "After brand_pick returns, summarize the picks and WAIT for the user to confirm before any next round. Never call brand_pick twice in a row without user confirmation.",
+      "After brand_pick returns with kind picked or rejected, summarize and WAIT for the user to confirm before any next round. Never call brand_pick twice in a row without user confirmation.",
+      "After brand_pick returns an action (more-same, more-new, check), the matching prompt is already queued as a follow-up turn: carry it out without asking again.",
+      "Offer the two exits explicitly rather than asking an open question: in the picker the user can press 1 (more names, same direction), 2 (new direction) or 3 (availability); from chat the same steps are /brand more, /brand pivot <note> and /brand check.",
       "If brand_pick reports a whole-round rejection, confirm it, steer by the attached note, and never suggest dismissed names again.",
       "When deep-checking picks, call brand_score with just the name first: a cached result was already researched in this project, trust it and never search twice. Research only uncached names, then record each via brand_score with the collision signals.",
       "Do not run npm, GitHub, DNS, or trademark checks before the user picks. Deep checks happen only on picks, in a later step.",
@@ -141,6 +149,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         title: `Brand  ·  round ${roundNumber}  ·  pick favorites`,
         product: product || undefined,
         likedSoFar: keptBefore,
+        checkedNames: Object.keys(loaded.state.availability),
       });
 
       if (!outcome) {
@@ -174,6 +183,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           `Round ${roundNumber}: rejected all ${names.length} (${fresh} new)${comment ? ` with note: ${comment}` : ""}. They won't be suggested again.`,
           "info",
         );
+        ctx.ui.notify("Next: /brand more applies the note as-is · /brand pivot <note> to refine it.", "info");
 
         return {
           content: [
@@ -182,8 +192,9 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
               text: [
                 `brand_pick round ${roundNumber}: user rejected ALL ${names.length} candidates${comment ? ` with note: ${comment}` : " (no note given)"}.`,
                 `Dismissed (never suggest again): ${loaded.state.dismissed.slice(-30).join(", ")}.`,
-                "Tell the user the round was rejected and confirm the note, then ask whether to run a fresh round in that direction.",
+                "Tell the user the round was rejected and confirm the note, then stop and wait.",
                 "Do NOT call brand_pick again until the user explicitly confirms. Do not repeat seen names.",
+                `The note is already saved, so /brand more applies it directly; /brand pivot <note> refines it further. Mention both, plus /brand check for availability of anything kept.`,
               ].join("\n"),
             },
           ],
@@ -198,7 +209,48 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         round,
         picks.map((name) => byName.get(name) ?? { name }),
       );
+
+      // A digit-key exit is itself the confirmation for that next step.
+      if (outcome.kind === "action" && outcome.note) {
+        loaded.state.directionNotes.push(outcome.note);
+      }
       saveBrandState(loaded.path, loaded.state);
+
+      if (outcome.kind === "action") {
+        const labels = {
+          "more-same": "more names, same direction",
+          "more-new": `more names, new direction: ${outcome.note}`,
+          check: "availability deep-check of the shortlist",
+        } as const;
+        const nextPrompt =
+          outcome.action === "check"
+            ? buildAvailabilityPrompt(loaded.state)
+            : outcome.action === "more-new"
+              ? buildPivotPrompt(loaded.state, outcome.note ?? "")
+              : buildMorePrompt(loaded.state);
+
+        ctx.ui.notify(
+          `${added.length > 0 ? `Kept ${added.join(", ")}. ` : ""}${labels[outcome.action]} — queued.`,
+          "info",
+        );
+        pi.sendUserMessage(nextPrompt, { deliverAs: "followUp" });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `brand_pick round ${roundNumber}: user kept ${added.length > 0 ? added.join(", ") : "(nothing new)"} and chose: ${labels[outcome.action]}.`,
+                `Kept across all rounds (accumulates, never resets): ${loaded.state.liked.map((entry) => entry.name).join(", ") || "(none)"}.`,
+                outcome.action === "check"
+                  ? "The availability prompt is already queued as the next turn. Do not ask for permission again; run it, consulting brand_score cache first."
+                  : "The next-round prompt is already queued. Do not ask for permission again; generate and call brand_pick.",
+              ].join("\n"),
+            },
+          ],
+          details: { roundId: round.id, picked: added, action: outcome.action },
+        };
+      }
 
       const allLiked = loaded.state.liked.map((entry) => entry.name);
       ctx.ui.notify(
@@ -207,7 +259,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           : `Round ${roundNumber}: nothing new kept. Total kept (${allLiked.length}): ${allLiked.join(", ") || "(none)"}.`,
         "info",
       );
-
+      ctx.ui.notify("Next round: press 1 for more names, 2 for a new direction, 3 for availability.", "info");
       return {
         content: [
           {
@@ -215,8 +267,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
             text: [
               `brand_pick round ${roundNumber}: user picked ${added.length > 0 ? added.join(", ") : "(nothing new this round)"}.`,
               `Kept across all rounds (accumulates, never resets): ${allLiked.join(", ") || "(none)"}.`,
-              "When deep-checking picks: first call brand_score with just each name. A cached result was already researched in this project, trust it and never search twice. Research only uncached names (npm, GitHub, DNS, web), then record each via brand_score with the collision signals.",
-              "STOP after this message: tell the user what was kept this round and the full kept list, then ask which direction to push next (e.g. more like X, less Y) and whether to run another round.",
+              "STOP after this message: report what was kept this round and the full kept list, then wait. Do not generate another round or run availability checks on your own.",
+              "The user can also press 1 (more names, same direction), 2 (new direction), or 3 (availability) inside the next picker, which queues that step directly. /brand more, /brand pivot <note> and /brand check do the same from here.",
               "Do NOT call brand_pick again until the user explicitly confirms another round. One picker at a time. Do not repeat seen names.",
             ].join("\n"),
           },
@@ -334,7 +386,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("brand", {
-    description: "Name an app: fast shortlist first, pick favorites in a UI, deep check only on picks",
+    description:
+      "Name an app. /brand <desc> start a round · more / pivot <note> for the next shortlist · check for availability of what you kept",
     handler: async (args, ctx) => {
       await runBrandCommand(pi, args, ctx);
     },
@@ -365,9 +418,41 @@ async function runBrandCommand(
     return;
   }
 
-  if (sub === "check") {
+  // The two exits from a shortlist, one command each.
+  if (sub === "more" || sub === "again" || sub === "next") {
+    if (!loaded.state.product) {
+      ctx.ui.notify("No product on record. Start with /brand <what the app does>.", "warning");
+      return;
+    }
+    saveBrandState(loaded.path, loaded.state);
+    pi.sendUserMessage(buildMorePrompt(loaded.state));
+    return;
+  }
+
+  if (sub === "pivot" || sub === "new") {
     if (!tail) {
-      ctx.ui.notify("Usage: /brand check <name>", "warning");
+      ctx.ui.notify("Usage: /brand pivot <what to change, e.g. less cute, more verb-able>", "warning");
+      return;
+    }
+    if (!loaded.state.product) {
+      ctx.ui.notify("No product on record. Start with /brand <what the app does>.", "warning");
+      return;
+    }
+    loaded.state.directionNotes.push(tail);
+    saveBrandState(loaded.path, loaded.state);
+    pi.sendUserMessage(buildPivotPrompt(loaded.state, tail));
+    return;
+  }
+
+  if (sub === "check") {
+    // No argument: deep-check the whole kept shortlist, cache first.
+    if (!tail) {
+      if (loaded.state.liked.length === 0) {
+        ctx.ui.notify("Nothing kept to check. Pick favorites first, then /brand check.", "warning");
+        return;
+      }
+      saveBrandState(loaded.path, loaded.state);
+      pi.sendUserMessage(buildAvailabilityPrompt(loaded.state));
       return;
     }
     const hit = getAvailability(loaded.state, tail);
@@ -376,6 +461,11 @@ async function runBrandCommand(
     } else {
       ctx.ui.notify(`${tail}: not availability-checked yet in this project.`, "info");
     }
+    return;
+  }
+
+  if (sub === "help") {
+    ctx.ui.notify(BRAND_HELP, "info");
     return;
   }
 
@@ -440,6 +530,15 @@ async function runBrandCommand(
   saveBrandState(loaded.path, { ...loaded.state, product });
   pi.sendUserMessage(buildRoundPrompt(product, loaded.state));
 }
+
+const BRAND_HELP = [
+  "/brand <description>  start a naming round",
+  "/brand more  another shortlist, same direction",
+  "/brand pivot <note>  change direction and get a shortlist",
+  "/brand check  availability deep-check of everything kept",
+  "/brand check <name>  cached availability for one name",
+  "/brand likes  kept names  ·  /brand note <text>  /brand dismiss <name>  /brand clear",
+].join("\n");
 
 function showLikes(
   ctx: ExtensionCommandContext,
