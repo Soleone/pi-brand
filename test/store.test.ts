@@ -42,6 +42,23 @@ test("round trip: record round, add likes, reload", () => {
   assert.ok(seenNames(second.state).has("jot"));
 });
 
+test("availability scores survive a save/reload round trip", () => {
+  const { home, cwd } = tempRoot();
+  const first = loadBrandState(cwd, true, {}, home);
+  const round = recordRound(first.state, {
+    product: "x",
+    candidates: [{ name: "Soon" }],
+  });
+  addLikes(first.state, round, [{ name: "Soon" }]);
+  first.state.liked[0].score = "decent";
+  first.state.liked[0].scoreReason = "no notable collision";
+  saveBrandState(first.path, first.state);
+
+  const second = loadBrandState(cwd, true, {}, home);
+  assert.equal(second.state.liked[0].score, "decent");
+  assert.equal(second.state.liked[0].scoreReason, "no notable collision");
+});
+
 test("untrusted projects use the global fallback path", () => {
   const { home, cwd } = tempRoot();
   const loaded = loadBrandState(cwd, false, {}, home);
