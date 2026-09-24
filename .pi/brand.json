@@ -1,7 +1,7 @@
 {
   "version": 1,
   "product": "a todo list for the agentic age, similarly to omarchy linux",
-  "updatedAt": "2026-09-07T07:39:10.843Z",
+  "updatedAt": "2026-09-09T05:26:11.761Z",
   "rounds": [
     {
       "id": "r1-mtqr254j",
@@ -679,7 +679,9 @@
         {
           "name": "Foray",
           "flavor": "a fresh foray",
-          "style": "plain"
+          "style": "plain",
+          "score": "terrible",
+          "scoreReason": "high legal risk: famous, same-space, or giant-associated collision"
         },
         {
           "name": "Launch",
@@ -863,11 +865,152 @@
         {
           "name": "Dibs",
           "flavor": "called it",
-          "style": "playful"
+          "style": "playful",
+          "score": "terrible",
+          "scoreReason": "high legal risk: famous, same-space, or giant-associated collision"
         },
         {
           "name": "Kempt",
           "flavor": "tidy, the word unkempt is hiding",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r14-mttne0b0",
+      "createdAt": "2026-09-09T05:18:21.708Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 14. User's DB direction (db icon logo). All verified new against 150 excluded.",
+      "candidates": [
+        {
+          "name": "TaskDB",
+          "flavor": "your proposal, todos in a db",
+          "style": "plain",
+          "score": "decent",
+          "scoreReason": "further clashes but none in the same category"
+        },
+        {
+          "name": "TodoDB",
+          "flavor": "todos in a db",
+          "style": "plain",
+          "score": "good",
+          "scoreReason": "some unrelated collisions, still commercially possible"
+        },
+        {
+          "name": "DoDB",
+          "flavor": "dos in a db",
+          "style": "plain",
+          "score": "decent",
+          "scoreReason": "further clashes but none in the same category"
+        },
+        {
+          "name": "DidDB",
+          "flavor": "dones in a db",
+          "style": "plain"
+        },
+        {
+          "name": "DoneDB",
+          "flavor": "dones in a db",
+          "style": "plain",
+          "score": "good",
+          "scoreReason": "some unrelated collisions, still commercially possible"
+        },
+        {
+          "name": "Tuple",
+          "flavor": "todos as rows",
+          "style": "invented"
+        },
+        {
+          "name": "Index",
+          "flavor": "indexed todos",
+          "style": "plain"
+        },
+        {
+          "name": "Cadence",
+          "flavor": "find your cadence",
+          "style": "plain"
+        }
+      ]
+    },
+    {
+      "id": "r15-mttnktfv",
+      "createdAt": "2026-09-09T05:23:39.403Z",
+      "product": "a todo list for the agentic age, similarly to omarchy linux",
+      "directionHint": "Round 15. DB round 2, same [thing]DB pattern as user's TaskDB/TodoDB/DoDB/DoneDB picks. All verified new against 159 excluded.",
+      "candidates": [
+        {
+          "name": "ListDB",
+          "flavor": "lists in a db",
+          "style": "plain"
+        },
+        {
+          "name": "ItemDB",
+          "flavor": "items in a db",
+          "style": "plain"
+        },
+        {
+          "name": "EntryDB",
+          "flavor": "entries in a db",
+          "style": "plain"
+        },
+        {
+          "name": "RecordDB",
+          "flavor": "records in a db",
+          "style": "plain"
+        },
+        {
+          "name": "RowDB",
+          "flavor": "rows in a db",
+          "style": "plain"
+        },
+        {
+          "name": "FileDB",
+          "flavor": "files in a db",
+          "style": "plain"
+        },
+        {
+          "name": "SheetDB",
+          "flavor": "sheets in a db",
+          "style": "plain"
+        },
+        {
+          "name": "GetDB",
+          "flavor": "gets in a db",
+          "style": "plain"
+        },
+        {
+          "name": "DeleteDB",
+          "flavor": "deletes in a db",
+          "style": "plain"
+        },
+        {
+          "name": "PatchDB",
+          "flavor": "patches in a db",
+          "style": "plain"
+        },
+        {
+          "name": "TraceDB",
+          "flavor": "traces in a db",
+          "style": "plain"
+        },
+        {
+          "name": "QueryDB",
+          "flavor": "queries in a db",
+          "style": "plain"
+        },
+        {
+          "name": "SchemaDB",
+          "flavor": "schemas in a db",
+          "style": "plain"
+        },
+        {
+          "name": "ViewDB",
+          "flavor": "views in a db",
+          "style": "plain"
+        },
+        {
+          "name": "ConnectDB",
+          "flavor": "connects in a db",
           "style": "plain"
         }
       ]
@@ -987,14 +1130,54 @@
       "flavor": "a fresh foray",
       "style": "plain",
       "roundId": "r10-mtqvylzg",
-      "likedAt": "2026-09-07T07:11:59.220Z"
+      "likedAt": "2026-09-07T07:11:59.220Z",
+      "score": "terrible",
+      "scoreReason": "live registered TM (Foray Technologies, Cl 9, reg 2021) plus pending FORAY app (Inuvo, Cl 42/35, filed 2026) plus live goforay.app; only foray.co free"
     },
     {
       "name": "Dibs",
       "flavor": "called it",
       "style": "playful",
       "roundId": "r13-mtqx907m",
-      "likedAt": "2026-09-07T07:38:29.365Z"
+      "likedAt": "2026-09-07T07:38:29.365Z",
+      "score": "terrible",
+      "scoreReason": "three registered DIBS marks incl software (Dibs Community Inc 2025, Dibs Technology 2024) plus My Dibs on App Store; npm taken; all TLDs taken"
+    },
+    {
+      "name": "TaskDB",
+      "flavor": "your proposal, todos in a db",
+      "style": "plain",
+      "roundId": "r14-mttne0b0",
+      "likedAt": "2026-09-09T05:21:41.563Z",
+      "score": "decent",
+      "scoreReason": "two tiny same-space GH repos (taskwarrior-based, annotation tasks) but obscure; npm taken; taskdb.dev/io/me/sh/co free"
+    },
+    {
+      "name": "TodoDB",
+      "flavor": "todos in a db",
+      "style": "plain",
+      "roundId": "r14-mttne0b0",
+      "likedAt": "2026-09-09T05:21:41.563Z",
+      "score": "good",
+      "scoreReason": "only student/demo repos; npm FREE; tododb.ai/org/dev/app/io/me/sh/co free (only .com taken)"
+    },
+    {
+      "name": "DoDB",
+      "flavor": "dos in a db",
+      "style": "plain",
+      "roundId": "r14-mttne0b0",
+      "likedAt": "2026-09-09T05:21:41.563Z",
+      "score": "decent",
+      "scoreReason": "DODB crypto token plus BE and DE companies, all unrelated; npm taken; dodb.ai/org/dev/me/sh/co free"
+    },
+    {
+      "name": "DoneDB",
+      "flavor": "dones in a db",
+      "style": "plain",
+      "roundId": "r14-mttne0b0",
+      "likedAt": "2026-09-09T05:21:41.563Z",
+      "score": "good",
+      "scoreReason": "single dead 1-star wrapper (donedb.com now free); npm taken but ALL TLDs incl .com free"
     }
   ],
   "dismissed": [
@@ -1016,7 +1199,23 @@
     "Tack",
     "Getgo",
     "Gogetter",
-    "Cando"
+    "Cando",
+    "Imp",
+    "ListDB",
+    "ItemDB",
+    "EntryDB",
+    "RecordDB",
+    "RowDB",
+    "FileDB",
+    "SheetDB",
+    "GetDB",
+    "DeleteDB",
+    "PatchDB",
+    "TraceDB",
+    "QueryDB",
+    "SchemaDB",
+    "ViewDB",
+    "ConnectDB"
   ],
   "directionNotes": [
     "First round, no prior likes. Mix of plain, commanding, playful, invented.",
@@ -1030,13 +1229,102 @@
     "Round 7. User wants playful and creative, grounded (celebrations/grins/punch) not fantasy. Tada landed before, Golem/Genie did not.",
     "Round 8. User correction: playful but NOT hippie. Dry wit and sharp, understated. No flower-power.",
     "Round 9. User: less jokey, momentum/action like Rally/Succeed/Go. Get the ball rolling, not grinning. Rally included at user direction despite known Broadcom collision.",
-    "SCORES 2026-09-07 (survives rewrites; see liked[].score too): decent=Soon, Neat; bad=Tada, Muster, Soar, Outset, Brief, Tidy, Memo; terrible=Docket, Steward, Rally. All twelve taken on npm (scoped package needed). Free TLDs found: soon.me, outset.sh.",
     "Round 10. Momentum vein nearly dry after 93 seen names. Last solid finds (Underway, Sally) plus disclosed rescues. If empty, recommend checking R9's unchecked nine over an 11th round.",
     "Round 11. User: more from existing directions. Past/verb forms of kept names plus two fresh establishment nouns (Minutes, Dossier).",
     "rally vs rallied, e.g. i dont know. need real variation, not just wordplay",
     "Round 12. Existing routes only, genuinely fresh words, no -ed wordplay, no padding. Short round on purpose.",
     "try others",
-    "Round 13. Last fresh words after 149 seen. No padding, no wordplay."
+    "Round 13. Last fresh words after 149 seen. No padding, no wordplay.",
+    "Round 14. User's DB direction (db icon logo). All verified new against 150 excluded.",
+    "Round 15. DB round 2, same [thing]DB pattern as user's TaskDB/TodoDB/DoDB/DoneDB picks. All verified new against 159 excluded.",
+    "check availability of exsting ones",
+    "SCORES 2026-09-07 (survives rewrites; see liked[].score too): good=TodoDB, DoneDB; decent=Soon, Neat, TaskDB, DoDB; bad=Tada, Muster, Soar, Outset, Brief, Tidy, Memo; terrible=Docket, Steward, Rally, Imp, Foray, Dibs. Imp: live registered US trademark #7049470 (It's My Phone Inc, Cl 9+42, reg 2023) plus shipping IMP music and call-blocker apps; npm taken; all TLDs taken. Foray: live Cl-9 TM reg 2021 + pending Cl-42 app 2026 + live goforay.app; only foray.co free. Dibs: three registered software marks (2025/2026) + My Dibs App Store app; all TLDs taken. TodoDB: npm free, 8 TLDs free. DoneDB: all TLDs incl .com free. Free TLDs found: soon.me, outset.sh, tododb.ai/org/dev/app/io/me/sh/co, donedb.* (all), taskdb.dev/io/me/sh/co, dodb.ai/org/dev/me/sh/co.",
+    "USER PICK 2026-09-07: DoneDB (one syllable less than TodoDB). Re-verified: npm taken (dead 0.0.3, use scoped package), donedb.com/io/dev/app all NXDOMAIN free."
   ],
-  "availability": {}
+  "availability": {
+    "imp": {
+      "score": "terrible",
+      "reason": "high legal risk: famous, same-space, or giant-associated collision",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": true,
+        "giantAssociation": false,
+        "unrelatedCount": 2,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-07T08:16:54.132Z"
+    },
+    "foray": {
+      "score": "terrible",
+      "reason": "high legal risk: famous, same-space, or giant-associated collision",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": true,
+        "giantAssociation": false,
+        "unrelatedCount": 1,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-07T08:28:12.219Z"
+    },
+    "dibs": {
+      "score": "terrible",
+      "reason": "high legal risk: famous, same-space, or giant-associated collision",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": true,
+        "giantAssociation": false,
+        "unrelatedCount": 2,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-07T08:28:12.220Z"
+    },
+    "taskdb": {
+      "score": "decent",
+      "reason": "further clashes but none in the same category",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": false,
+        "giantAssociation": false,
+        "unrelatedCount": 3,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-09T05:26:11.760Z"
+    },
+    "tododb": {
+      "score": "good",
+      "reason": "some unrelated collisions, still commercially possible",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": false,
+        "giantAssociation": false,
+        "unrelatedCount": 1,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-09T05:26:11.760Z"
+    },
+    "dodb": {
+      "score": "decent",
+      "reason": "further clashes but none in the same category",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": false,
+        "giantAssociation": false,
+        "unrelatedCount": 3,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-09T05:26:11.761Z"
+    },
+    "donedb": {
+      "score": "good",
+      "reason": "some unrelated collisions, still commercially possible",
+      "signals": {
+        "famousCollision": false,
+        "sameSpaceCollision": false,
+        "giantAssociation": false,
+        "unrelatedCount": 1,
+        "comParked": false
+      },
+      "checkedAt": "2026-09-09T05:26:11.761Z"
+    }
+  }
 }
