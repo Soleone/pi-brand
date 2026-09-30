@@ -70,7 +70,10 @@ export interface BrandState {
   availability: Record<string, AvailabilityRecord>;
   finalists: string[];
   brief: NamingPreferences;
+  /** Creative model for naming. */
   model: string;
+  /** Omitted means use the creative model for availability assessment too. */
+  workerModel?: string;
   reserve: Candidate[];
   generationMetrics: GenerationMetric[];
 }

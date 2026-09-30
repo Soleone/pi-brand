@@ -25,19 +25,20 @@ function compact(value: string, limit: number): string {
 }
 
 function promptFor(brief: NamingBrief, excluded: Set<string>): string {
-  const recent = [...excluded].slice(-24);
+  const recent = [...excluded].slice(-24).map((item) => compact(item, 60));
   const exampleLine = brief.examples.slice(-8).map((item) => compact(item, 60)).filter(Boolean).join(", ");
   return [
-    `Generate up to 24 ranked candidate names for: ${compact(brief.product, 300)}`,
-    `Direction: ${compact(brief.direction, 500)}`,
+    "Generate up to 24 candidate names in rank order. Include only a compact optional flavor note for each name.",
+    "Follow the creative brief. Avoid obvious famous brands and same-category products using existing knowledge only. Do no availability or other research.",
+    `Product: ${compact(brief.product, 300)}`,
     brief.constraints.singleWord
       ? "Use familiar, recognizable English single words; easy to spell."
       : "Use familiar, recognizable words; spaces are allowed.",
     `Maximum length: ${Math.max(1, Math.floor(brief.constraints.maxLength))} characters.`,
+    `Direction: ${compact(brief.direction, 500)}`,
     exampleLine ? `Examples show taste only; do not copy: ${exampleLine}` : "",
-    "Follow the direction. Avoid obvious famous brands and same-category products using existing knowledge only. Do no availability or other research. Include only a compact optional flavor note for each name.",
+    // Put changing round data last so refills preserve the stable brief prefix.
     `Do not use excluded names (${excluded.size} total); recent sample: ${recent.join(", ") || "none"}.`,
-    "Return candidates in rank order.",
   ].filter(Boolean).join("\n");
 }
 

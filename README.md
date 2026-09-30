@@ -9,32 +9,48 @@ Requires Pi **0.99.1 or newer** for nested tools and provider-neutral model requ
 1. `/brand <what the product does>` generates a ranked pool in an isolated model request, then opens the favorites picker.
 2. **Space** toggles, **↑↓** moves, typing filters. **Enter** saves favorites. **Esc** opens a reject/note prompt; Esc again cancels the batch.
 3. Picker actions:
+   - **0**: save checked favorites and return to the overview, reserving unpicked names rather than rejecting them
    - **1**: another batch, using the reserve first
    - **2**: update the direction and get new names
    - **3**: choose up to three finalists, then check them
    - **4**: save the highlighted name as a favorite and get more like it
 4. `/brand finalists` promotes up to three favorites. Older favorites remain taste references, not a research queue. The finalist picker shows newest favorites first; Space toggles, Enter saves, Esc cancels.
 5. `/brand check` checks only finalists. `/brand evidence <name>` shows retained findings and source links.
+6. Once a product brief exists, **`/brand`**, `/brand overview`, and `/brand status` open the overview without generating. Saving, rejecting or cancelling a favorites round also returns there.
+
+The overview shows favorites, finalists and their cached-check status, reserve, seen/excluded count, direction, and both model roles. Browse all favorites, choose finalists, inspect evidence/history, edit the brief, change models, or continue naming. Terminal lists are searchable and show at most ten entries at a time. Esc backs out of subviews; Esc in the overview returns to chat. RPC uses supported select/input dialogs for the same actions.
+
+You do not have to generate more names to finish shortlisting. With many favorites, go straight to **Choose finalists**. See [UI navigation and boundaries](docs/ui-navigation.md) for the complete flow and remaining command-only operations.
 
 Default exploration makes **no network availability checks**. `/brand screen` explicitly requests a quick web screen of finalists. `/brand screened` opts into screening **three candidates before display**, three at a time rather than researching an entire speculative pool. Screened mode can add up to 45 seconds after generation.
 
 ## Budgets and model routing
 
-- Default naming/assessment model: `openai/gpt-6-luna`. `/brand model <provider/model-id>` changes only this run's naming model, never the main session model. There is no silent model fallback.
+- Default creative model: `openai/gpt-6-luna`. **`/brand-settings`** (also `/brand settings`) selects a creative model for generation and an optional worker model for source-backed availability assessment. The worker defaults to **Same as creative**, preserving existing runs. `/brand model <provider/model-id>` and `/brand worker <provider/model-id|same>` provide command equivalents.
+- Settings are saved with **this project's naming run**, not global defaults. They never switch the main session model. Available choices use authenticated scoped models, or the available catalog when no scope is set. Unavailable models fail explicitly; there is no silent fallback.
+- Use a stronger creative model for name quality and a cheaper worker for bounded evidence interpretation, after checking its accuracy. UI navigation, filtering, deduplication, scoring, cache handling, storage and registry requests do not need a model. Naming does not add a second worker pass. Changing the worker retains the reserve; changing the creative model clears it. Cached findings are retained until explicit refresh.
 - Generation receives one compact brief, eight recent taste examples and a recent exclusion sample. The complete exclusion set stays local.
 - Each request processes at most 24 proposals. A batch allows at most two model requests, with one refill only when fewer than eight names survive.
-- Request timeout: 30 seconds. Entire generation timeout: 45 seconds. Output: at most 3,000 tokens per request, low reasoning, no provider retries or browsing tools.
+- Request timeout: 30 seconds. Entire generation timeout: 45 seconds. Output: at most 3,000 creative or 2,000 worker tokens per request (less if the selected model has a tighter output/context limit), low reasoning, no provider retries or browsing tools.
 - Up to 24 valid candidates enter the pool. Show 12 at a time and retain the rest, so **More** often needs no model call. A smaller remaining batch is shown rather than regenerating prematurely.
 - A changed direction, product, word/length constraint or model clears the reserve. Rejected batches stay excluded; cancelled batches return to the reserve.
 - No brand state is injected into unrelated agent turns. Generation commands and picker navigation run directly, not through queued main-agent prompts.
 - Checks allow one to three finalists and a 45-second operation budget. Searches run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
-- `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Failed/aborted requests can still incur provider charges not captured in those successful-pool metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
+- `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Assessment costs and failed/aborted requests are not included in these generation-only metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
+
+### Context isolation and prompt caching
+
+Creative generation and worker assessment are separate, **single-turn** requests. Neither reads Pi's conversation or reuses the other's messages, tool results, system prompt, or model selection. Even when both roles use the same provider/model, each has a different stable cache-routing identity scoped to this project run, role, and model. This identity is not a stored conversation or a call to warm the cache.
+
+Both prompts keep instructions first and changing data last. Creative input includes a compact product/direction, at most eight taste examples, and 24 recent exclusions; full duplicate filtering remains local. Worker input includes the product and at most three source-linked excerpts per finalist, each trimmed to 400 characters; the full evidence stays in app storage for inspection. Worker assessments cannot cite an undisclosed excerpt. Concurrent search completion cannot reorder the finalist batch. Hard character budgets and a conservative model-context estimate reject oversized requests instead of silently overflowing or switching models.
+
+Requests ask for short cache retention where supported. Cache hits depend on provider-specific thresholds and expiry; small prompts may not be cacheable. There is **no padding, replayed transcript, synthetic warmup, or guarantee of cache savings**. `/brand stats` shows provider-reported cache reads for generation, not a promise about future runs.
 
 No elapsed-time or quality guarantee is implied by these limits. They are work ceilings; compare real runs with `/brand stats`.
 
 ## One current brief
 
-`/brand brief` shows the current product, direction, constraints and model. Historical direction notes are retained but no longer replayed. `/brand note` and `/brand pivot` replace the current direction instead of stacking contradictory instructions.
+`/brand brief` shows the current product, direction, constraints and both model roles. Historical direction notes are retained but no longer replayed. `/brand note` and `/brand pivot` replace the current direction instead of stacking contradictory instructions.
 
 Defaults: familiar single words, up to 12 characters, inspect `.com` and `.app`, package/handle checks off.
 
@@ -78,6 +94,8 @@ This repository's existing naming run has already been migrated and its tracked 
 ## Commands
 
 ```text
+/brand                    overview when a brief exists; otherwise start a run
+/brand overview|status    overview without generation
 /brand <description>      generate and pick favorites
 /brand more              next reserve batch or bounded generation
 /brand pivot <note>       new direction, then generate
@@ -90,15 +108,19 @@ This repository's existing naming run has already been migrated and its tracked 
 /brand screened          screen three names before display
 /brand evidence <name>    retained findings and source links
 /brand brief             current brief and model
+/brand-settings          choose creative and worker models for this project
+/brand settings          same settings menu
 /brand model <provider/id>
+/brand worker <provider/id|same>
 /brand words single|multiple
 /brand length <3-30>
 /brand domains <suffixes>
 /brand packages on|off
 /brand stats             path, reserve and generation metrics
 /brand keep <names>      save favorites from a recorded batch
-/brand dismiss <names>   exclude names and remove them from finalists
-/brand excluded          exclusion count
+/brand dismiss <names>   exclude names; remove from favorites and finalists
+/brand excluded          complete seen/excluded name list
+/brand history           recorded candidates, reserve, dismissals and direction notes
 /brand clear             confirm clearing this run; backup remains
 /brand help
 ```

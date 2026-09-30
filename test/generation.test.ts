@@ -56,6 +56,17 @@ test("bounded prompts do not replay hundreds of excluded names or reject real pr
   assert.deepEqual(result.candidates.map((candidate) => candidate.name), ["Getaway", "Tryout"]);
 });
 
+test("refill preserves the creative brief prefix and varies only the bounded exclusion suffix", async () => {
+  const prompts: string[] = [];
+  await generatePool(brief, async (prompt) => { prompts.push(prompt); return { candidates: prompts.length === 1 ? names("Alpha") : names("Bravo") }; });
+  assert.equal(prompts.length, 2);
+  const stable = (prompt: string) => prompt.split("Do not use excluded names")[0];
+  assert.equal(stable(prompts[0]), stable(prompts[1]));
+  assert.ok(prompts[0].includes("Product: tasks"));
+  assert.ok(prompts[1].includes("alpha") || prompts[1].includes("Alpha"));
+  assert.ok(prompts.every((prompt) => prompt.length < 2000));
+});
+
 test("aggregates usage", async () => {
   const usage = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 3, cost: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 } };
   let calls = 0;

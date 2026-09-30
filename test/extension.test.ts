@@ -21,34 +21,43 @@ function harness() {
   const messages: string[] = [];
   const notices: string[] = [];
   const choices: string[] = [];
+  const inputs: (string | undefined)[] = [];
+  const dialogs: { title: string; choices: string[] }[] = [];
+  const requestedModels: string[] = [];
   let modelCalls = 0;
-  let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+  const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
   const pi = {
     registerTool: (tool: TestTool) => tools.set(tool.name, tool),
-    registerCommand: (_name: string, definition: { handler: typeof command }) => { command = definition.handler; },
+    registerCommand: (name: string, definition: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => { commands.set(name, definition.handler); },
     sendUserMessage: (message: string) => messages.push(message),
     appendEntry: () => {},
     on: (event: string) => events.push(event),
   } as unknown as ExtensionAPI;
   const ctx = {
-    cwd: root, mode: "rpc", hasUI: true,
+    cwd: root, mode: "rpc", hasUI: true, scopedModels: [],
     isProjectTrusted: () => true, waitForIdle: async () => {},
     ui: {
       notify: (message: string) => notices.push(message),
-      select: async () => choices.shift(),
+      select: async (title: string, options: string[]) => { dialogs.push({ title, choices: options }); return choices.shift(); },
+      input: async () => inputs.shift(),
       custom: () => { throw new Error("RPC must not open a terminal component"); },
       confirm: async () => false,
     },
     model: { id: "gpt-6.1-sol" },
     modelRegistry: {
-      find: (provider: string, id: string) => provider === "openai" && id === "gpt-6-luna" ? { provider, id } : undefined,
+      find: (provider: string, id: string) => provider === "openai" && ["gpt-6-luna", "cheap-worker", "other-creative"].includes(id) ? { provider, id } : undefined,
+      getAvailable: () => ["gpt-6-luna", "cheap-worker", "other-creative"].map((id) => ({ provider: "openai", id })),
       hasConfiguredAuth: () => true,
-      streamSimple: (_model: unknown, context: { messages: { role: string; content: unknown }[]; tools: unknown[] }, options: { maxTokens: number; maxRetries: number }) => {
+      streamSimple: (_model: { provider: string; id: string }, context: { systemPrompt: string; messages: { role: string; content: unknown }[]; tools: unknown[] }, options: { maxTokens: number; maxRetries: number; sessionId: string; cacheRetention: string }) => {
         modelCalls++;
+        requestedModels.push(`${_model.provider}/${_model.id}`);
         assert.equal(context.messages.length, 1);
         assert.equal(context.messages[0].role, "user");
         assert.equal(context.tools.length, 1);
-        assert.equal(options.maxTokens, 3000);
+        const worker = context.systemPrompt.includes("preliminary brand collisions");
+        assert.equal(options.maxTokens, worker ? 2000 : 3000);
+        assert.match(options.sessionId, worker ? /pi-brand-v1-worker-/ : /pi-brand-v1-creative-/);
+        assert.equal(options.cacheRetention, "short");
         assert.equal(options.maxRetries, 0);
         assert.doesNotMatch(JSON.stringify(context), /expensive main history/);
         const schema = context.tools[0] as { parameters: { properties: { results?: unknown } } };
@@ -61,8 +70,9 @@ function harness() {
   } as unknown as ExtensionCommandContext;
   register(pi);
   return {
-    ctx, events, tools, messages, notices, choices,
-    command: (args: string) => command!(args, ctx),
+    ctx, events, tools, messages, notices, choices, inputs, dialogs, requestedModels,
+    command: (args: string) => commands.get("brand")!(args, ctx),
+    settings: () => commands.get("brand-settings")!("", ctx),
     state: () => loadBrandState(root, true).state,
     modelCalls: () => modelCalls,
     cleanup: () => { if (previous === undefined) delete process.env.PI_BRAND_CONFIG; else process.env.PI_BRAND_CONFIG = previous; fs.rmSync(root, { recursive: true, force: true }); },
@@ -158,5 +168,159 @@ test("compatibility cache lookup is batched and cannot invent a clean partial sc
     const result = await tool.execute("two", { names: ["Able", "Bold"] } as never, undefined, undefined, app.ctx as unknown as ExtensionToolContext);
     assert.match(result.content[0].text, /"fresh":\["bold"\]/);
     assert.equal(result.terminate, undefined);
+  } finally { app.cleanup(); }
+});
+
+test("overview pauses without rejecting candidates and resumes the same reserve for free", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Overview: save picks, reserve the rest", "Close overview");
+    await app.command("tasks");
+    assert.deepEqual(app.state().liked.map((entry) => entry.name), ["Able"]);
+    assert.equal(app.state().reserve.length, 23);
+    assert.deepEqual(app.state().rounds[0].candidates.map((entry) => entry.name), ["Able"]);
+    assert.deepEqual(app.state().dismissed, []);
+    assert.match(app.dialogs.at(-1)!.title, /1 favorites.*23 reserved/);
+    app.choices.push("More names", "Overview: save picks, reserve the rest", "Close overview");
+    await app.command("");
+    assert.equal(app.modelCalls(), 1);
+    assert.equal(app.state().reserve.length, 23);
+    const picker = [...app.dialogs].reverse().find((entry) => entry.title === "Pick favorites")!;
+    assert.ok(picker.choices.includes("[ ] Bold"));
+    assert.ok(!picker.choices.includes("[ ] Able"));
+    assert.deepEqual(app.messages, []);
+  } finally { app.cleanup(); }
+});
+
+test("empty pause and cancellation keep the entire batch available", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Overview: save picks, reserve the rest", "Close overview");
+    await app.command("tasks");
+    assert.equal(app.state().reserve.length, 24);
+    assert.equal(app.state().rounds.length, 0);
+    await app.command("more"); // no choice: cancel, then close overview
+    assert.equal(app.modelCalls(), 1);
+    assert.equal(app.state().reserve.length, 24);
+    assert.equal(app.state().rounds.length, 0);
+    await app.command("status");
+    assert.equal(app.modelCalls(), 1);
+  } finally { app.cleanup(); }
+});
+
+test("model settings save atomically, isolate creative and worker routing, and retain cached evidence", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection", "Close overview");
+    await app.command("tasks");
+    app.choices.push("Worker (evidence assessment): same as creative", "openai/cheap-worker", "Save settings");
+    await app.settings();
+    assert.equal(app.state().workerModel, "openai/cheap-worker");
+    assert.equal(app.state().reserve.length, 12);
+    assert.equal(app.modelCalls(), 1);
+    app.choices.push("Creative (name generation): openai/gpt-6-luna", "openai/other-creative", "Cancel");
+    await app.settings();
+    assert.equal(app.state().model, "openai/gpt-6-luna");
+    assert.equal(app.state().reserve.length, 12);
+    await app.command("finalists Able");
+    const toolCtx = {
+      ...app.ctx, tools: [{ name: "web_search" }],
+      executeTool: async () => ({ isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: "https://example.com/Able", snippet: "source findings" }] }) }] } }),
+    } as unknown as ExtensionToolContext;
+    await app.tools.get("brand_check")!.execute("check", { stage: "screen" } as never, undefined, undefined, toolCtx);
+    assert.deepEqual(app.requestedModels, ["openai/gpt-6-luna", "openai/cheap-worker"]);
+    const checkedAt = app.state().availability.able.checkedAt;
+    await app.command("model openai/other-creative");
+    assert.equal(app.state().reserve.length, 0);
+    assert.equal(app.state().availability.able.checkedAt, checkedAt);
+    assert.equal(app.state().workerModel, "openai/cheap-worker");
+    await app.command("worker same");
+    assert.equal(app.state().workerModel, undefined);
+    await app.command("model unknown/missing");
+    assert.equal(app.state().model, "openai/other-creative");
+    assert.match(app.notices.at(-1)!, /unavailable/);
+    assert.equal(app.ctx.model!.id, "gpt-6.1-sol");
+  } finally { app.cleanup(); }
+});
+
+test("overview subviews return without model calls and a dismissed favorite leaves finalists", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection", "Close overview");
+    await app.command("tasks");
+    await app.command("finalists Able");
+    app.choices.push("History and exclusions", "Reserved names", "Back", "Edit brief", "direction", "Browse favorites", "Able", "Read evidence", "Choose finalists", "Save selection", "Close overview");
+    app.inputs.push("energetic verbs");
+    await app.command("overview");
+    assert.equal(app.state().brief.direction, "energetic verbs");
+    assert.equal(app.modelCalls(), 1);
+    assert.deepEqual(app.state().finalists, ["Able"]);
+    await app.command("dismiss Able");
+    assert.deepEqual(app.state().liked, []);
+    assert.deepEqual(app.state().finalists, []);
+    assert.ok(app.state().dismissed.includes("Able"));
+    assert.equal(app.state().rounds[0].candidates[0].name, "Able");
+  } finally { app.cleanup(); }
+});
+
+test("default worker reuses the creative model ID but not its request profile", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection", "Close overview");
+    await app.command("tasks");
+    await app.command("finalists Able");
+    const toolCtx = {
+      ...app.ctx, tools: [{ name: "web_search" }],
+      executeTool: async () => ({ isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: "https://example.com/Able", snippet: "source findings" }] }) }] } }),
+    } as unknown as ExtensionToolContext;
+    await app.tools.get("brand_check")!.execute("check", { stage: "screen" } as never, undefined, undefined, toolCtx);
+    assert.deepEqual(app.requestedModels, ["openai/gpt-6-luna", "openai/gpt-6-luna"]);
+  } finally { app.cleanup(); }
+});
+
+test("invalid overview edits show a recoverable error without closing the workspace", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection", "Close overview");
+    await app.command("tasks");
+    app.choices.push("Edit brief", "length", "Generation stats", "Close overview");
+    app.inputs.push("99");
+    await app.command("overview");
+    assert.equal(app.state().brief.maxLength, 12);
+    assert.ok(app.dialogs.some((dialog) => dialog.choices.includes("Generation stats")));
+    assert.match(app.notices.find((notice) => notice.includes("Length must")) ?? "", /3-30/);
+    assert.equal(app.modelCalls(), 1);
+  } finally { app.cleanup(); }
+});
+
+test("compatibility pause retains all 30 supplied candidates across reload, not just 24", async () => {
+  const app = harness();
+  try {
+    const supplied = Array.from({ length: 30 }, (_, index) => ({ name: `Name${index}` }));
+    app.choices.push("Overview: save picks, reserve the rest", "Close overview");
+    await app.tools.get("brand_pick")!.execute("pick", { product: "tasks", candidates: supplied } as never, undefined, undefined, app.ctx as unknown as ExtensionToolContext);
+    assert.equal(app.state().reserve.length, 30);
+    assert.equal(app.state().rounds.length, 0);
+    assert.equal(app.modelCalls(), 0);
+    app.choices.push("Overview: save picks, reserve the rest", "Close overview");
+    await app.command("more");
+    assert.equal(app.state().reserve.length, 30);
+    assert.equal(app.modelCalls(), 0);
+  } finally { app.cleanup(); }
+});
+
+test("overview explicitly controls check stage and refresh without changing the saved brief", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection", "Close overview");
+    await app.command("tasks");
+    await app.command("finalists Able");
+    app.choices.push("Check finalists", "Refresh quick screen");
+    await app.command("overview");
+    assert.equal(app.messages.length, 1);
+    assert.match(app.messages[0], /screen/);
+    assert.match(app.messages[0], /refresh true/);
+    assert.equal(app.state().product, "tasks");
+    assert.equal(app.modelCalls(), 1);
   } finally { app.cleanup(); }
 });

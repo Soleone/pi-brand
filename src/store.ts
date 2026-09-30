@@ -237,13 +237,18 @@ export function seenNames(state: BrandState): Set<string> {
 export function dismissNames(state: BrandState, names: Iterable<string>): string[] {
   const known = new Set(state.dismissed.map(availabilityKey));
   const added: string[] = [];
+  const removed = new Set<string>();
   for (const raw of names) {
     const name = raw.trim();
-    if (!name || known.has(availabilityKey(name))) continue;
+    if (!name) continue;
+    removed.add(availabilityKey(name));
+    if (known.has(availabilityKey(name))) continue;
     known.add(availabilityKey(name));
     state.dismissed.push(name);
     added.push(name);
   }
+  state.liked = state.liked.filter((entry) => !removed.has(availabilityKey(entry.name)));
+  state.finalists = state.finalists.filter((name) => !removed.has(availabilityKey(name)));
   return added;
 }
 
@@ -329,7 +334,8 @@ function normalizeState(raw: unknown): BrandState | undefined {
     if (typeof prefs.checkPackages === "boolean") state.brief.checkPackages = prefs.checkPackages;
   }
   if (typeof record.model === "string" && /^[^/]+\/.+$/.test(record.model)) state.model = record.model;
-  if (Array.isArray(record.reserve)) state.reserve = normalizeRound({ candidates: record.reserve })?.candidates.slice(0, 24) ?? [];
+  if (typeof record.workerModel === "string" && /^[^/]+\/.+$/.test(record.workerModel)) state.workerModel = record.workerModel;
+  if (Array.isArray(record.reserve)) state.reserve = normalizeRound({ candidates: record.reserve })?.candidates ?? [];
   if (Array.isArray(record.finalists)) {
     const liked = new Map(state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));
     state.finalists = [...new Set(record.finalists.filter((name): name is string => typeof name === "string").map((name) => liked.get(availabilityKey(name))).filter((name): name is string => !!name))].slice(0, 3);

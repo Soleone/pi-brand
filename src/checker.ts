@@ -4,6 +4,7 @@ import { availabilityKey, getAvailability } from "./store.ts";
 import type { AvailabilityEvidence, AvailabilityRecord, BrandState } from "./types.ts";
 
 const FLAG = Type.Union([Type.Boolean(), Type.Null()]);
+const MAX_ASSESSMENT_URL_LENGTH = 320;
 export const ASSESSMENT_SCHEMA = Type.Object({ results: Type.Array(Type.Object({
   name: Type.String(), reason: Type.String({ maxLength: 400 }),
   famousCollision: FLAG, sameSpaceCollision: FLAG, giantAssociation: FLAG,
@@ -73,13 +74,17 @@ async function inspectUrl(url: string, source: AvailabilityEvidence["source"], s
 }
 
 function assessPrompt(state: BrandState, items: { name: string; evidence: AvailabilityEvidence[] }[]): string {
+  // Pass only bounded web excerpts. Keep original evidence intact for display and later checks.
+  const excerpts = items.map((item) => ({ name: item.name, evidence: item.evidence
+    .filter((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH)
+    .slice(0, 3)
+    .map((entry) => ({ url: entry.url, detail: entry.detail.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").slice(0, 400) })) }));
   return [
-    `Assess naming collisions for this product: ${state.product.slice(0, 500)}`,
-    "Use only supplied evidence. Null means not established. Do not invent businesses, domains, sources, or legal conclusions.",
-    "A package or GitHub repository alone does not establish a same-category brand collision. An unrelated famous association is different from a same-category collision.",
-    "Count unrelated uses only when the evidence identifies them. comParked needs actual evidence of parking/for-sale, not a domain registration lookup.",
-    "Give a concise factual reason and cite URLs from the supplied evidence. These are preliminary search findings, not trademark clearance.",
-    JSON.stringify(items),
+    "Assess naming collisions from supplied web excerpts only. Null means not established. Do not invent businesses, domains, sources, or legal conclusions.",
+    "A package or repository alone is not a same-category collision. Distinguish unrelated famous brands from same-category uses. Count unrelated uses only if identified in evidence.",
+    "comParked requires evidence of parking/for-sale, not registration. Give a short factual reason and cite only URLs below. This is not trademark clearance.",
+    `Product: ${state.product.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300)}`,
+    JSON.stringify(excerpts),
   ].join("\n");
 }
 
@@ -128,9 +133,11 @@ export async function checkFinalists(
       if (!evidence.some((entry) => entry.source === "web")) warnings.push("No source-linked web evidence; collision assessment is incomplete.");
       pending.push({ name, evidence, warnings, previous });
     }));
+    // Network completion order must not randomize the worker request or its cache prefix.
+    pending.sort((a, b) => state.finalists.indexOf(a.name) - state.finalists.indexOf(b.name));
     let usage: Usage | undefined;
     let assessments: Assessment[] = [];
-    const needsAssessment = pending.filter((item) => !item.previous && item.evidence.some((entry) => entry.source === "web"));
+    const needsAssessment = pending.filter((item) => !item.previous && item.evidence.some((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH));
     if (needsAssessment.length > 0) {
       try {
         const response = await dependencies.assess(assessPrompt(state, needsAssessment), controller.signal);
@@ -144,7 +151,7 @@ export async function checkFinalists(
     await Promise.all(pending.map(async (item) => {
       const assessment = assessments.find((entry) => availabilityKey(entry.name) === availabilityKey(item.name));
       const signals: Partial<CollisionSignals> = { ...item.previous?.signals };
-      const suppliedUrls = new Set(item.evidence.map((entry) => entry.url));
+      const suppliedUrls = new Set(item.evidence.filter((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH).slice(0, 3).map((entry) => entry.url));
       // Uncited model judgments never become persisted collision facts.
       const supported = assessment?.sourceUrls.some((url) => suppliedUrls.has(url)) && assessment.sourceUrls.every((url) => suppliedUrls.has(url));
       if (assessment && supported) {

@@ -112,3 +112,51 @@ test("evidence extraction preserves actual URLs and bounds search payloads", () 
   assert.equal(many.length, 6);
   assert.equal(many[0].detail.length, 1500);
 });
+
+test("worker batch follows finalist order rather than concurrent search completion", async () => {
+  const { state, dependencies } = fixture();
+  const release: (() => void)[] = [];
+  dependencies.search = async (name) => {
+    if (name === "Able") await new Promise<void>((resolve) => { release.push(resolve); });
+    return [{ source: "web", url: `https://example.com/${name}`, detail: "One source" }];
+  };
+  dependencies.assess = async (prompt) => {
+    const items = JSON.parse(prompt.split("\n").at(-1)!) as { name: string }[];
+    assert.deepEqual(items.map((item) => item.name), ["Able", "Bold", "Calm"]);
+    return { results: [] };
+  };
+  const pending = checkFinalists(state, "screen", dependencies);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  release[0]();
+  await pending;
+});
+
+test("worker sees bounded cited excerpts only, never creative taste or full search results", async () => {
+  const { state, dependencies } = fixture();
+  state.product = "p".repeat(1000);
+  state.brief.direction = "PRIVATE_CREATIVE_DIRECTION";
+  state.liked = [{ name: "PRIVATE_TASTE", likedAt: "2026-01-01" }];
+  state.finalists = ["Able", "Bold", "Calm"];
+  dependencies.search = async (name) => Array.from({ length: 6 }, (_, index) => ({
+    source: "web", url: `https://example.com/${name}/${index}`, detail: `Large snippet ${"x".repeat(4000)}\u0001`,
+  }));
+  let assessmentPrompt = "";
+  dependencies.assess = async (prompt) => {
+    assessmentPrompt = prompt;
+    const items = JSON.parse(prompt.split("\n").at(-1)!) as { name: string; evidence: { url: string; detail: string }[] }[];
+    assert.equal(items.length, 3);
+    for (const item of items) {
+      assert.equal(item.evidence.length, 3);
+      assert.ok(item.evidence.every((source) => source.detail.length <= 400));
+      assert.ok(item.evidence.every((source) => !source.url.endsWith("/5")));
+    }
+    // A citation to a fetched but undisclosed source must not support a judgment.
+    return { results: items.map((item) => ({ name: item.name, reason: "unsubstantiated", sourceUrls: [`https://example.com/${item.name}/5`], famousCollision: true, sameSpaceCollision: true, giantAssociation: true, unrelatedCount: 0, comParked: false })) };
+  };
+  const result = await checkFinalists(state, "screen", dependencies);
+  assert.ok(assessmentPrompt.length < 14000);
+  assert.ok(!assessmentPrompt.includes("PRIVATE_CREATIVE_DIRECTION"));
+  assert.ok(!assessmentPrompt.includes("PRIVATE_TASTE"));
+  assert.equal(result.records.able.score, "unknown");
+  assert.equal(result.records.able.evidence?.length, 6);
+});

@@ -49,3 +49,27 @@ test("normal picker retains keyboard more and rejection behavior without redunda
   const rejected = await pickNames(context(["\x1b", "less cute", "\r"]), [{ name: "Able" }]);
   assert.deepEqual(rejected, { kind: "rejected", names: ["Able"], comment: "less cute" });
 });
+
+test("overview key saves explicit picks without turning a filter or highlight into a rejection", async () => {
+  assert.deepEqual(await pickNames(context(["0"]), [{ name: "Able" }]), { kind: "action", action: "overview", names: [] });
+  const candidates = [{ name: "Able" }, { name: "Bold" }];
+  const result = await pickNames(context([" ", "zzz", "0"], (lines) => {
+    for (const line of lines) assert.ok(visibleWidth(line) <= 24);
+  }), candidates);
+  assert.deepEqual(result, { kind: "action", action: "overview", names: ["Able"] });
+});
+
+test("RPC picker exposes direction, rejection, similar names and finalist navigation", async () => {
+  const choices = ["Change direction", "Reject round with a note"];
+  const ctx = {
+    mode: "rpc", hasUI: true,
+    ui: { select: async () => choices.shift(), input: async () => choices.length ? undefined : "less cute" },
+  } as unknown as ExtensionContext;
+  assert.deepEqual(await pickNames(ctx, [{ name: "Able" }]), { kind: "rejected", names: ["Able"], comment: "less cute" });
+  choices.push("More like a name", "Able");
+  const similar = await pickNames(ctx, [{ name: "Able" }]);
+  assert.equal(similar?.kind, "action");
+  if (similar?.kind === "action") { assert.equal(similar.action, "more-new"); assert.deepEqual(similar.names, ["Able"]); }
+  choices.push("Choose finalists");
+  assert.deepEqual(await pickNames(ctx, [{ name: "Able" }]), { kind: "action", action: "check", names: [] });
+});

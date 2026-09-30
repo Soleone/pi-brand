@@ -5,6 +5,9 @@ import { takeBatch } from "./engine.ts";
 import { addUsage } from "./generation.ts";
 import { generationRequest, requestStructured } from "./model.ts";
 import { pickNames } from "./picker.ts";
+import { selectBrandModels, validateBrandModel } from "./model-settings.ts";
+import { brandOverview, generationStats, OVERVIEW_ACTIONS } from "./overview.ts";
+import { selectBrandOption } from "./selection.ts";
 import { buildAvailabilityPrompt } from "./prompt.ts";
 import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
 import { addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, recordAvailability, recordRound, saveBrandState, setDirection, setFinalists } from "./store.ts";
@@ -53,6 +56,13 @@ function showRecord(ctx: ExtensionContext, name: string, record?: AvailabilityRe
   ].join("\n"), "info");
 }
 
+function updateBrief(state: BrandState, command: string, tail: string): void {
+  if (command === "words") { if (tail !== "single" && tail !== "multiple") throw new Error("Usage: /brand words single|multiple"); state.brief.singleWord = tail === "single"; state.reserve = []; }
+  if (command === "length") { const length = Number(tail); if (!Number.isInteger(length) || length < 3 || length > 30) throw new Error("Length must be 3-30 characters."); state.brief.maxLength = length; state.reserve = []; }
+  if (command === "domains") { const domains = tail.split(/[\s,]+/).map((suffix) => suffix.replace(/^\./, "").toLowerCase()); if (!domains.length || domains.length > 3 || domains.some((suffix) => !/^[a-z]{2,12}$/.test(suffix))) throw new Error("Choose 1-3 suffixes, e.g. /brand domains com app"); state.brief.domains = [...new Set(domains)]; }
+  if (command === "packages") { if (tail !== "on" && tail !== "off") throw new Error("Usage: /brand packages on|off"); state.brief.checkPackages = tail === "on"; }
+}
+
 async function chooseFinalists(ctx: ExtensionContext, initial?: string[]): Promise<boolean> {
   const run = load(ctx);
   if (run.state.liked.length === 0) { ctx.ui.notify("Pick some favorites first with /brand.", "info"); return false; }
@@ -81,7 +91,7 @@ function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckD
       return extractWebEvidence(outcome.result.content);
     },
     assess: async (prompt, signal) => {
-      const response = await requestStructured<{ results: Awaited<ReturnType<CheckDependencies["assess"]>>["results"] }>(ctx, state.model, prompt, ASSESSMENT_SCHEMA, signal);
+      const response = await requestStructured<{ results: Awaited<ReturnType<CheckDependencies["assess"]>>["results"] }>(ctx, state.workerModel ?? state.model, prompt, ASSESSMENT_SCHEMA, signal, "worker");
       return { results: response.value.results, usage: response.usage };
     },
     fetch,
@@ -194,9 +204,9 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         if (!outcome) {
           await mutate(ctx, (state) => {
             state.rounds = state.rounds.filter((entry) => entry.id !== round.id);
-            state.reserve = [...candidates, ...state.reserve].slice(0, 24);
+            state.reserve = [...candidates, ...state.reserve];
           });
-          return textResult("Picker cancelled; batch returned to the reserve.", { roundId: undefined, picked: [] as string[] }, usage);
+          return textResult("Picker cancelled; batch returned to the reserve.", { roundId: undefined, picked: [] as string[], overview: true }, usage);
         }
         if (outcome.kind === "rejected") {
           await mutate(ctx, (state) => {
@@ -204,13 +214,23 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
             if (outcome.comment.trim()) setDirection(state, outcome.comment);
           });
           ctx.ui.notify("Round rejected. /brand more continues; /brand pivot <note> changes direction.", "info");
-          return textResult("Round rejected; direction saved.", { roundId: round.id, picked: [] as string[] }, usage);
+          return textResult("Round rejected; direction saved.", { roundId: round.id, picked: [] as string[], overview: true }, usage);
         }
         const picked = await mutate(ctx, (state) => {
           const added = addLikes(state, round, candidates.filter((candidate) => outcome.names.includes(candidate.name)));
           if (outcome.kind === "action" && outcome.note) setDirection(state, outcome.note);
           return added;
         });
+        if (outcome.kind === "action" && outcome.action === "overview") {
+          await mutate(ctx, (state) => {
+            const remaining = candidates.filter((candidate) => !outcome.names.includes(candidate.name));
+            const savedRound = state.rounds.find((entry) => entry.id === round.id);
+            if (savedRound) savedRound.candidates = savedRound.candidates.filter((candidate) => outcome.names.includes(candidate.name));
+            if (savedRound?.candidates.length === 0) state.rounds = state.rounds.filter((entry) => entry.id !== round.id);
+            state.reserve = [...remaining, ...state.reserve];
+          });
+          return textResult(`Saved favorites: ${picked.join(", ") || "none new"}. Unpicked names reserved.`, { roundId: outcome.names.length > 0 ? round.id : undefined, picked, overview: true }, usage);
+        }
         if (outcome.kind === "action" && outcome.action !== "check") continue;
         if (outcome.kind === "action") {
           if (await chooseFinalists(ctx, outcome.names)) {
@@ -220,10 +240,134 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
             } else pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state), { deliverAs: "followUp" });
           }
         } else ctx.ui.notify(`Favorites saved: ${picked.join(", ") || "none new"}. /brand more · /brand finalists · /brand check`, "info");
-        return textResult(`Saved favorites: ${picked.join(", ") || "none new"}.`, { roundId: round.id, picked }, usage);
+        return textResult(`Saved favorites: ${picked.join(", ") || "none new"}.`, { roundId: round.id, picked, overview: outcome.kind !== "action" }, usage);
       }
     } finally { busy = false; }
   }
+
+  async function openModelSettings(ctx: ExtensionContext) {
+    if (busy) throw new Error("Finish the open naming picker before changing models.");
+    const selected = await selectBrandModels(ctx, load(ctx).state);
+    if (!selected) return;
+    const previous = load(ctx).state;
+    if (previous.model === selected.model && previous.workerModel === selected.workerModel) {
+      ctx.ui.notify("Brand models unchanged.", "info");
+      return;
+    }
+    const creativeChanged = previous.model !== selected.model;
+    await mutate(ctx, (state) => {
+      if (creativeChanged) state.reserve = [];
+      state.model = selected.model;
+      state.workerModel = selected.workerModel;
+    });
+    ctx.ui.notify(`Brand models saved. ${creativeChanged ? "Creative model changed; reserved names cleared." : "Worker model changed; reserved names kept."} Main model unchanged; cached checks retained.`, "info");
+  }
+
+  async function openOverview(ctx: ExtensionContext): Promise<"more" | "deep" | "screen" | "refresh-deep" | "refresh-screen" | undefined> {
+    while (true) {
+      const run = load(ctx);
+      if (!ctx.hasUI) { ctx.ui.notify(brandOverview(run.state), "info"); return; }
+      const choice = await selectBrandOption(ctx, brandOverview(run.state), OVERVIEW_ACTIONS);
+      if (!choice || choice === "Close overview") return;
+      if (choice === "More names") return "more";
+      if (choice === "Choose finalists") { await chooseFinalists(ctx); continue; }
+      if (choice === "Check finalists") {
+        if (run.state.finalists.length === 0 && !await chooseFinalists(ctx)) continue;
+        const check = await selectBrandOption(ctx, "Check up to 3 finalists · no legal clearance", ["Deep check (cache first)", "Quick screen (cache first)", "Refresh deep check", "Refresh quick screen", "Back"]);
+        if (check === "Deep check (cache first)") return "deep";
+        if (check === "Quick screen (cache first)") return "screen";
+        if (check === "Refresh deep check") return "refresh-deep";
+        if (check === "Refresh quick screen") return "refresh-screen";
+        continue;
+      }
+      if (choice === "Model settings") { await openModelSettings(ctx); continue; }
+      if (choice === "Generation stats") { ctx.ui.notify(generationStats(run.state, run.path), "info"); continue; }
+      if (choice === "History and exclusions") {
+        const sections = ["Candidate history", "Excluded names", "Reserved names", "Direction history", "Back"];
+        const section = await selectBrandOption(ctx, "Read run history", sections);
+        const entries = section === sections[0] ? run.state.rounds.flatMap((round) => round.candidates.map((candidate) => `${round.createdAt} · ${candidate.name} · ${candidate.flavor ?? ""}`))
+          : section === sections[1] ? [...excludedNames(run.state).seen].sort()
+          : section === sections[2] ? run.state.reserve.map((candidate) => `${candidate.name} · ${candidate.flavor ?? ""}`)
+          : section === sections[3] ? run.state.directionNotes : undefined;
+        if (entries) {
+          const entry = await selectBrandOption(ctx, `${section} (${entries.length}) · read only`, ["Back", ...entries]);
+          if (entry && entry !== "Back") ctx.ui.notify(entry, "info");
+        }
+        continue;
+      }
+      if (choice === "Edit brief") {
+        ctx.ui.notify(JSON.stringify({ product: run.state.product, ...run.state.brief }, null, 2), "info");
+        const field = await selectBrandOption(ctx, "Edit current brief", ["product", "direction", "words", "length", "domains", "packages", "Back"]);
+        if (!field || field === "Back") continue;
+        const hints: Record<string, string> = { product: run.state.product, direction: run.state.brief.direction, words: "single or multiple", length: "3-30", domains: "1-3 suffixes, e.g. com app", packages: "on or off" };
+        const value = await ctx.ui.input(`Set ${field}`, hints[field]);
+        if (value === undefined) continue;
+        try {
+          await mutate(ctx, (state) => {
+            if (field === "product") { if (!value.trim()) throw new Error("Product cannot be empty."); state.product = value.trim().slice(0, 1000); state.reserve = []; }
+            else if (field === "direction") setDirection(state, value);
+            else updateBrief(state, field, value.trim());
+          });
+          ctx.ui.notify("Brief saved. Existing checks are retained; refresh them explicitly if needed.", "info");
+        } catch (error) {
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        }
+        continue;
+      }
+      if (choice === "Browse favorites" || choice === "Read evidence") {
+        const names = choice === "Browse favorites" ? [...run.state.liked].reverse().map((entry) => entry.name)
+          : [...new Set([...run.state.finalists, ...Object.keys(run.state.availability)])];
+        if (names.length === 0) { ctx.ui.notify("Nothing saved here yet.", "info"); continue; }
+        const name = await selectBrandOption(ctx, choice, ["Back", ...names]);
+        if (!name || name === "Back") continue;
+        if (choice === "Read evidence") { showRecord(ctx, name, getAvailability(run.state, name)); continue; }
+        const favorite = run.state.liked.find((entry) => entry.name === name)!;
+        const action = await selectBrandOption(ctx, `${name}\n${favorite.flavor ?? ""}\n${favorite.style ?? ""}`, ["Read evidence", "Choose finalists", "Dismiss favorite", "Back"]);
+        if (action === "Read evidence") showRecord(ctx, name, getAvailability(run.state, name));
+        if (action === "Choose finalists") await chooseFinalists(ctx, [...new Set([...run.state.finalists, name])].slice(-3));
+        if (action === "Dismiss favorite" && await ctx.ui.confirm(`Dismiss ${name}?`, "Removes it from favorites and finalists. History and cached evidence are retained.")) await mutate(ctx, (state) => dismissNames(state, [name]));
+      }
+    }
+  }
+
+  /** One navigation loop, so repeated picker/overview cycles do not grow the stack. */
+  async function runWorkspace(ctx: ExtensionContext, initial?: Candidate[], screenedCtx?: ExtensionToolContext, overviewFirst = false) {
+    let result = textResult("Brand overview closed.", { picked: [] as string[] });
+    let usage: Usage | undefined;
+    let overview = overviewFirst;
+    let candidates = initial;
+    while (true) {
+      if (overview) {
+        const action = await openOverview(ctx);
+        if (!action) return { ...result, ...(usage ? { usage } : {}) };
+        if (action !== "more") {
+          const stage = action.includes("screen") ? "screen" : "deep";
+          const refresh = action.startsWith("refresh-");
+          if (!screenedCtx) {
+            pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state, stage, refresh), { deliverAs: "followUp" });
+            return { ...result, ...(usage ? { usage } : {}) };
+          }
+          const checked = await runCheck(screenedCtx, stage, refresh);
+          usage = addUsage(usage, checked.usage);
+          continue;
+        }
+      }
+      const round = await runRounds(ctx, candidates, screenedCtx);
+      candidates = undefined;
+      result = round;
+      usage = addUsage(usage, round.usage);
+      overview = "overview" in round.details && round.details.overview === true;
+      if (!overview) return { ...result, ...(usage ? { usage } : {}) };
+    }
+  }
+
+  pi.registerCommand("brand-settings", {
+    description: "Choose creative and worker models for this project's naming run",
+    handler: async (_args, ctx) => {
+      try { await ctx.waitForIdle(); await openModelSettings(ctx); }
+      catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+    },
+  });
 
   pi.registerTool({
     name: "brand_generate", label: "Generate names", executionMode: "sequential",
@@ -234,7 +378,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         if (params.product?.trim()) { if (state.product !== params.product.trim()) state.reserve = []; state.product = params.product.trim(); }
         if (params.direction?.trim()) setDirection(state, params.direction);
       });
-      return runRounds(ctx, undefined, params.screened ? ctx : undefined);
+      return runWorkspace(ctx, undefined, params.screened ? ctx : undefined);
     },
   });
   pi.registerTool({
@@ -249,7 +393,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     parameters: Type.Object({ candidates: Type.Array(CANDIDATE_SCHEMA, { maxItems: 30 }), product: Type.Optional(Type.String()), directionHint: Type.Optional(Type.String()) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (params.product?.trim()) await mutate(ctx, (state) => { if (state.product !== params.product!.trim()) state.reserve = []; state.product = params.product!.trim(); });
-      return runRounds(ctx, params.candidates.map((candidate) => ({ ...candidate, name: candidate.name.trim() })));
+      return runWorkspace(ctx, params.candidates.map((candidate) => ({ ...candidate, name: candidate.name.trim() })));
     },
   });
   pi.registerTool({
@@ -293,41 +437,38 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("brand", {
-    description: "Name a product using a compact isolated engine. more / pivot / finalists / check / brief / stats",
+    description: "Brand overview and naming workspace. more / finalists / check / settings / stats",
     handler: async (args, ctx) => {
       try {
         await ctx.waitForIdle();
         const [head = "", ...rest] = args.trim().split(/\s+/);
         const tail = rest.join(" ").trim();
         const command = head.toLowerCase();
-        if (busy && !["help", "likes", "liked", "status", "stats", "brief", "evidence", "excluded"].includes(command)) throw new Error("Finish the open naming picker before changing this run.");
+        if (busy && !["help", "likes", "liked", "stats", "brief", "evidence", "excluded", "history"].includes(command)) throw new Error("Finish the open naming picker before changing this run.");
         const run = load(ctx);
         if (command === "help") { ctx.ui.notify(HELP, "info"); return; }
-        if (command === "likes" || command === "liked" || command === "status") {
+        if (command === "overview" || command === "status" || (!command && run.state.product)) { await runWorkspace(ctx, undefined, undefined, true); return; }
+        if (command === "settings") { await openModelSettings(ctx); return; }
+        if (command === "likes" || command === "liked") {
           ctx.ui.notify(`Favorites (${run.state.liked.length}): ${run.state.liked.map((entry) => `${entry.name}${entry.score ? ` (${entry.score})` : ""}`).join(", ") || "none"}\nFinalists: ${run.state.finalists.join(", ") || "none"}`, "info"); return;
         }
-        if (command === "stats") {
-          const metrics = run.state.generationMetrics;
-          const usage = metrics.reduce<Usage | undefined>((sum, metric) => addUsage(sum, metric.usage), undefined);
-          ctx.ui.notify(`Run: ${run.path}\nLast ${metrics.length} generated pools (up to 50 retained): ${metrics.reduce((sum, metric) => sum + metric.modelCalls, 0)} model calls, ${metrics.reduce((sum, metric) => sum + metric.generated, 0)} candidates.\nReserve: ${run.state.reserve.length}. Model: ${run.state.model}.\nReported tokens: ${usage?.input ?? 0} uncached input, ${usage?.cacheRead ?? 0} cache reads, ${usage?.output ?? 0} output. Cost: $${(usage?.cost.total ?? 0).toFixed(4)}.\nLast generation: ${metrics.at(-1)?.elapsedMs ?? 0}ms.`, "info"); return;
-        }
-        if (command === "brief") { ctx.ui.notify(JSON.stringify({ product: run.state.product, model: run.state.model, ...run.state.brief }, null, 2), "info"); return; }
-        if (command === "model") {
-          if (!/^[^/]+\/.+$/.test(tail)) throw new Error("Usage: /brand model <provider/model-id>");
-          await mutate(ctx, (state) => { state.model = tail; state.reserve = []; }); ctx.ui.notify(`Naming model: ${tail}. Main model unchanged.`, "info"); return;
+        if (command === "stats") { ctx.ui.notify(generationStats(run.state, run.path), "info"); return; }
+        if (command === "brief") { ctx.ui.notify(JSON.stringify({ product: run.state.product, model: run.state.model, workerModel: run.state.workerModel ?? "same as creative", ...run.state.brief }, null, 2), "info"); return; }
+        if (command === "model" || command === "worker") {
+          if (command !== "worker" || tail !== "same") validateBrandModel(ctx, tail);
+          await mutate(ctx, (state) => {
+            if (command === "model") { if (state.model !== tail) state.reserve = []; state.model = tail; }
+            else state.workerModel = tail === "same" ? undefined : tail;
+          }); ctx.ui.notify(`${command === "model" ? "Creative" : "Worker"} model: ${tail}. Main model unchanged. Cached checks retained.`, "info"); return;
         }
         if (command === "words" || command === "length" || command === "domains" || command === "packages") {
-          await mutate(ctx, (state) => {
-            if (command === "words") { if (tail !== "single" && tail !== "multiple") throw new Error("Usage: /brand words single|multiple"); state.brief.singleWord = tail === "single"; state.reserve = []; }
-            if (command === "length") { const length = Number(tail); if (!Number.isInteger(length) || length < 3 || length > 30) throw new Error("Length must be 3-30 characters."); state.brief.maxLength = length; state.reserve = []; }
-            if (command === "domains") { const domains = tail.split(/[\s,]+/).map((suffix) => suffix.replace(/^\./, "").toLowerCase()); if (!domains.length || domains.length > 3 || domains.some((suffix) => !/^[a-z]{2,12}$/.test(suffix))) throw new Error("Choose 1-3 suffixes, e.g. /brand domains com app"); state.brief.domains = [...new Set(domains)]; }
-            if (command === "packages") { if (tail !== "on" && tail !== "off") throw new Error("Usage: /brand packages on|off"); state.brief.checkPackages = tail === "on"; }
-          }); ctx.ui.notify("Brief updated. Existing checks are retained; use /brand check refresh to update them.", "info"); return;
+          await mutate(ctx, (state) => updateBrief(state, command, tail));
+          ctx.ui.notify("Brief updated. Existing checks are retained; use /brand check refresh to update them.", "info"); return;
         }
         if (command === "note" || command === "pivot") {
           await mutate(ctx, (state) => setDirection(state, tail));
           if (command === "note") { ctx.ui.notify("Direction updated; old notes remain archived.", "info"); return; }
-          await runRounds(ctx); return;
+          await runWorkspace(ctx); return;
         }
         if (command === "finalists") {
           if (!tail) await chooseFinalists(ctx);
@@ -356,17 +497,14 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         }
         if (command === "dismiss" || command === "drop") {
           if (!tail) throw new Error("Usage: /brand dismiss <name>, <name>");
-          await mutate(ctx, (state) => {
-            const names = namesFrom(tail, state);
-            dismissNames(state, names);
-            const keys = new Set(names.map(availabilityKey));
-            state.finalists = state.finalists.filter((name) => !keys.has(availabilityKey(name)));
-          }); ctx.ui.notify("Names dismissed. Their taste/history and cached checks are retained.", "info"); return;
+          await mutate(ctx, (state) => dismissNames(state, namesFrom(tail, state)));
+          ctx.ui.notify("Names dismissed from favorites and finalists. History and cached checks are retained.", "info"); return;
         }
-        if (command === "excluded") { ctx.ui.notify(`${excludedNames(run.state).seen.size} excluded names.`, "info"); return; }
+        if (command === "excluded") { ctx.ui.notify(`${excludedNames(run.state).seen.size} seen/excluded names:\n${[...excludedNames(run.state).seen].sort().join(", ")}`, "info"); return; }
+        if (command === "history") { ctx.ui.notify(JSON.stringify({ rounds: run.state.rounds, reserve: run.state.reserve, dismissed: run.state.dismissed, directionNotes: run.state.directionNotes }, null, 2), "info"); return; }
         if (command === "clear") {
           if (!ctx.hasUI || !await ctx.ui.confirm("Clear this naming run?", "Deletes rounds, favorites, finalists, reserve and cached checks. Other runs and the migration backup are unchanged.")) return;
-          await mutate(ctx, (state) => { const blank = emptyBrandState(state.product); blank.model = state.model; blank.brief = state.brief; Object.assign(state, blank); }); ctx.ui.notify("Run cleared.", "info"); return;
+          await mutate(ctx, (state) => { const blank = emptyBrandState(state.product); blank.model = state.model; blank.workerModel = state.workerModel; blank.brief = state.brief; Object.assign(state, blank); }); ctx.ui.notify("Run cleared. Brief and model settings retained.", "info"); return;
         }
         if (!["more", "again", "next"].includes(command) && args.trim()) {
           await mutate(ctx, (state) => { const product = args.trim().slice(0, 1000); if (state.product !== product) state.reserve = []; state.product = product; });
@@ -377,7 +515,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           if (!product?.trim()) return;
           await mutate(ctx, (state) => { state.product = product.trim().slice(0, 1000); });
         }
-        const result = await runRounds(ctx);
+        const result = await runWorkspace(ctx);
         if (!ctx.hasUI) ctx.ui.notify(result.content[0].text, "info");
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
@@ -386,6 +524,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
 }
 
 const HELP = [
+  "/brand [overview|status]  overview of the saved run (no model call)",
   "/brand <product>  isolated naming + favorites picker",
   "/brand more  next reserve batch, or a new bounded pool",
   "/brand pivot <note>  update direction and generate",
@@ -396,7 +535,8 @@ const HELP = [
   "/brand screen [refresh]  quick web screen of finalists",
   "/brand screened  opt in to screening three names before display",
   "/brand evidence <name>  retained findings and sources",
-  "/brand model <provider/id>  naming model only",
+  "/brand-settings  creative and worker models for this project run",
+  "/brand model <provider/id> · worker <provider/id|same>  main model unchanged",
   "/brand brief · words single|multiple · length <3-30> · domains <suffixes> · packages on|off",
-  "/brand stats · keep <names> · dismiss <names> · excluded · clear · help",
+  "/brand stats · history · keep <names> · dismiss <names> · excluded · clear · help",
 ].join("\n");

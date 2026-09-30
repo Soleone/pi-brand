@@ -23,7 +23,7 @@ export interface PickOptions {
 type PickerContext = ExtensionContext | ExtensionCommandContext;
 
 /** What the picker resolved to: keeps, a whole-round rejection, or a chosen next step. */
-export type PickAction = "more-same" | "more-new" | "check";
+export type PickAction = "more-same" | "more-new" | "check" | "overview";
 
 export type PickOutcome =
   | { kind: "picked"; names: string[] }
@@ -86,7 +86,8 @@ function scoreColor(score: string | undefined): ScoreColor {
  * Multi-select picker for name candidates. Space toggles, Enter confirms the
  * toggled picks, and the digit keys on the action row switch to the next step
  * in one press: 1 more names same direction, 2 new direction (asks for a
- * note), 3 check availability. Digits are free because candidate names never
+ * note), 3 choose finalists and check, 0 save picks and return to overview.
+ * Digits are free because candidate names never
  * contain them. Esc opens the react prompt (type a note, Enter rejects the
  * round, Esc on an empty note cancels); Enter with nothing toggled does too.
  * Enter never auto-picks the highlighted row.
@@ -284,7 +285,8 @@ export async function pickNames(
         actionLine.setText(
           `${key("⏎")} ${theme.fg("dim", selected.size > 0 ? `save ${selected.size}` : "reject round")}${sep}` +
             `${key("1")} ${theme.fg("dim", "more")}${sep}${key("2")} ${theme.fg("dim", "direction…")}\n` +
-            `${key("3")} ${theme.fg("dim", availabilityLabel)}${sep}${key("4")} ${theme.fg("dim", "more like highlighted")}`,
+            `${key("3")} ${theme.fg("dim", availabilityLabel)}${sep}${key("4")} ${theme.fg("dim", "more like highlighted")}\n` +
+            `${key("0")} ${theme.fg("dim", "overview: save picks, reserve the rest")}`,
         );
         footerLine.setText(
           `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
@@ -386,8 +388,11 @@ export async function pickNames(
           render();
           return;
         }
-        // 1/2/3 are the next-step keys. Candidate names never contain digits,
-        // so these keys cost the filter nothing.
+        // Digits are navigation keys, not part of name filters.
+        if (!options.selectionOnly && data === "0") {
+          finish({ kind: "action", action: "overview", names: selectedNames() });
+          return;
+        }
         if (!options.selectionOnly && data === "1") {
           finish({ kind: "action", action: "more-same", names: selectedNames() });
           return;
@@ -500,11 +505,34 @@ export async function pickNames(
 async function selectLoopFallback(ctx: PickerContext, candidates: Candidate[], options: PickOptions): Promise<PickOutcome | undefined> {
   const picks = [...new Set(options.initialNames ?? [])].filter((name) => candidates.some((candidate) => candidate.name === name)).slice(0, options.maxSelection ?? candidates.length);
   const finish = "Save selection";
+  const overview = "Overview: save picks, reserve the rest";
+  const more = "More names";
+  const direction = "Change direction";
+  const finalists = "Choose finalists";
+  const similar = "More like a name";
+  const reject = "Reject round with a note";
   while (true) {
-    const choices = [finish, ...candidates.map((candidate) => `${picks.includes(candidate.name) ? "[x]" : "[ ]"} ${candidate.name}`)];
+    const actions = options.selectionOnly ? [] : [overview, more, direction, finalists, similar, reject];
+    const choices = [finish, ...actions, ...candidates.map((candidate) => `${picks.includes(candidate.name) ? "[x]" : "[ ]"} ${candidate.name}`)];
     const choice = await ctx.ui.select(options.title ?? "Pick favorites", choices);
     if (!choice) return undefined;
     if (choice === finish) return { kind: "picked", names: picks };
+    if (!options.selectionOnly) {
+      if (choice === overview) return { kind: "action", action: "overview", names: picks };
+      if (choice === more) return { kind: "action", action: "more-same", names: picks };
+      if (choice === finalists) return { kind: "action", action: "check", names: picks };
+      if (choice === direction || choice === reject) {
+        const note = await ctx.ui.input(choice === direction ? "What should change?" : "Why reject this round? (optional)");
+        if (note === undefined) continue;
+        if (choice === reject) return { kind: "rejected", names: candidates.map((candidate) => candidate.name), comment: note };
+        return { kind: "action", action: note.trim() ? "more-new" : "more-same", names: picks, note: note.trim() };
+      }
+      if (choice === similar) {
+        const name = await ctx.ui.select("More like which name?", candidates.map((candidate) => candidate.name));
+        if (!name) continue;
+        return { kind: "action", action: "more-new", names: [...new Set([...picks, name])], note: `More like "${name}" in meaning and feel. ${options.direction ?? "Keep the existing spelling and word constraints."}` };
+      }
+    }
     const candidate = candidates.find((entry) => choice === `[${picks.includes(entry.name) ? "x" : " "}] ${entry.name}`);
     if (!candidate) continue;
     const index = picks.indexOf(candidate.name);
