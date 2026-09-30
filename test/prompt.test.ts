@@ -1,72 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildAvailabilityPrompt, buildMorePrompt, buildNamingBrief } from "../src/prompt.ts";
+import { emptyBrandState } from "../src/types.ts";
 
-import {
-  buildAvailabilityPrompt,
-  buildBrandContext,
-  buildMorePrompt,
-  buildPivotPrompt,
-} from "../src/prompt.ts";
-import { emptyBrandState, type BrandState } from "../src/types.ts";
-
-function stateWith(): BrandState {
-  const state = emptyBrandState("a todo list for the agentic age");
-  state.rounds.push({
-    id: "r1",
-    createdAt: new Date().toISOString(),
-    product: state.product,
-    candidates: [{ name: "Docket" }, { name: "Tidy" }],
-  });
-  state.liked.push({ name: "Docket", likedAt: new Date().toISOString() });
-  state.dismissed.push("Tidy");
-  state.directionNotes.push("dry wit, not hippie");
-  return state;
-}
-
-test("more prompt keeps direction and excludes every seen name", () => {
-  const prompt = buildMorePrompt(stateWith());
-  assert.match(prompt, /a todo list for the agentic age/);
-  assert.match(prompt, /dry wit, not hippie/);
-  assert.match(prompt, /brand_pick/);
-  assert.match(prompt, /Docket/);
-  assert.match(prompt, /Tidy/);
+test("naming brief uses one current direction and at most eight taste examples", () => {
+  const state = emptyBrandState("a keyboard todo app");
+  state.brief.direction = "familiar confident words";
+  state.directionNotes = ["obsolete constraint", "accidental conversation fragment"];
+  state.liked = Array.from({ length: 30 }, (_, index) => ({ name: `Taste${index}`, likedAt: "2026-01-01" }));
+  const brief = buildNamingBrief(state);
+  assert.equal(brief.direction, "familiar confident words");
+  assert.equal(brief.examples.length, 8);
+  assert.equal(brief.excluded.length, 30);
+  assert.doesNotMatch(JSON.stringify(brief), /obsolete|accidental/);
 });
 
-test("pivot prompt surfaces the new note as highest priority", () => {
-  const prompt = buildPivotPrompt(stateWith(), "momentum, not grinning");
-  assert.match(prompt, /Highest priority for this round.*momentum, not grinning/);
-});
-
-test("availability prompt splits cached from fresh and stays cache-first", () => {
-  const state = stateWith();
-  state.liked.push({ name: "Soon", likedAt: new Date().toISOString() });
-  state.availability.soon = {
-    score: "decent",
-    reason: "clashes elsewhere",
-    checkedAt: new Date().toISOString(),
-  };
-
+test("check prompt names only finalists and delegates all bookkeeping", () => {
+  const state = emptyBrandState("tasks");
+  state.liked = [{ name: "Favorite", likedAt: "x" }, { name: "Finalist", likedAt: "x" }];
+  state.finalists = ["Finalist"];
   const prompt = buildAvailabilityPrompt(state);
-  assert.match(prompt, /brand_score/);
-  assert.match(prompt, /Already checked, report as-is: Soon/);
-  assert.match(prompt, /Research these uncached names now: Docket/);
-  assert.doesNotMatch(prompt, /Research these uncached names now: .*Soon/);
+  assert.match(prompt, /brand_check once/);
+  assert.match(prompt, /Finalist/);
+  assert.doesNotMatch(prompt, /Favorite|brand_score|npm/);
+  assert.match(buildAvailabilityPrompt(state, "screen", true), /stage screen and refresh true/);
 });
 
-test("availability prompt refuses to run on an empty shortlist", () => {
-  const state = emptyBrandState("x");
-  assert.match(buildAvailabilityPrompt(state), /No kept names/);
+test("empty finalist list never asks for broad research", () => {
+  assert.match(buildAvailabilityPrompt(emptyBrandState()), /Choose up to three/);
 });
 
-test("brand context advertises the exits and the availability cache", () => {
-  const state = stateWith();
-  state.availability.docket = {
-    score: "bad",
-    reason: "court filings app",
-    checkedAt: new Date().toISOString(),
-  };
-  const context = buildBrandContext(state) ?? "";
-  assert.match(context, /Availability-checked.*docket \(bad\)/);
-  assert.match(context, /\/brand more/);
-  assert.match(context, /\/brand check/);
+test("fallback generation prompt stays constant as history grows", () => {
+  const state = emptyBrandState("tasks");
+  const small = buildMorePrompt(state);
+  state.directionNotes = Array(100).fill("a long redundant note");
+  state.liked = Array.from({ length: 500 }, (_, index) => ({ name: `Name${index}`, likedAt: "x" }));
+  assert.equal(buildMorePrompt(state), small);
+  assert.ok(small.length < 250);
 });

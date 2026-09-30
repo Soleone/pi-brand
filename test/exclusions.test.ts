@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { dismissNames, excludedNames, seenNames } from "../src/store.ts";
-import { buildBrandContext, buildMorePrompt } from "../src/prompt.ts";
+import { buildNamingBrief, buildMorePrompt } from "../src/prompt.ts";
 import { emptyBrandState, type BrandState } from "../src/types.ts";
 
 function pool(count: number): string[] {
@@ -45,22 +45,14 @@ test("excludedNames covers every shown, kept, and rejected name", () => {
   assert.equal(seen.size, seenNames(state).size);
 });
 
-test("prompts scale to hundreds of names with a count instead of a fake-complete list", () => {
+test("full exclusions stay local rather than bloating the main conversation", () => {
   const state = stateWithRound(200);
   dismissNames(state, pool(50));
-
-  const prompt = buildMorePrompt(state);
-  assert.match(prompt, /Excluded, never propose again \(200 total\)/);
-  assert.match(prompt, /\+160 earlier/);
-  assert.match(prompt, /drops these in code/);
-
-  const context = buildBrandContext(state);
-  assert.ok(context, "exclusions alone must be enough to inject context");
-  assert.match(context, /Rejected for good, never propose again \(50 total\)/);
-  assert.match(context, /200 names are excluded in this project/);
+  assert.equal(buildNamingBrief(state).excluded.length, 200);
+  assert.match(buildMorePrompt(state), /brand_generate/);
+  assert.doesNotMatch(buildMorePrompt(state), /Name0|Name199/);
 });
 
-test("first round says nothing is excluded yet", () => {
-  const state = emptyBrandState("x");
-  assert.match(buildMorePrompt(state), /No names are excluded yet/);
+test("first brief has no exclusions", () => {
+  assert.deepEqual(buildNamingBrief(emptyBrandState("x")).excluded, []);
 });

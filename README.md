@@ -1,90 +1,121 @@
 # pi-brand
 
-Name apps fast: the agent generates candidates, you pick favorites in a
-multi-select UI, likes persist across rounds so later searches stay on track.
+Name products without growing the main conversation. Pi supplies the keyboard UI and credentials; a small headless engine owns generation, deduplication, reserves and availability checking.
 
-## Flow
+Requires Pi **0.99.1 or newer** for nested tools and provider-neutral model requests. After updating this extension, run `/reload`.
 
-1. `/brand <what the app does>` starts a round. The agent generates 20
-   candidates, filters to 12-15 survivors, then calls the `brand_pick` tool.
-2. The picker opens. **Space** toggles a pick, **typing** filters, **↑↓**
-   moves, **Esc** opens the react prompt (a note, **⏎** rejects the whole
-   round, **Esc** on an empty note cancels).
-3. The `next` row in the picker is where the round ends, all one keypress:
-   - `⏎` keep the toggled picks and hand control back
-   - `1` more names, same direction
-   - `2` new direction: type the note, **⏎** generates (empty note = same direction)
-   - `3` availability deep-check of the shortlist, with the unchecked count
-     shown, so you can see what it will cost before pressing it
-   `1`/`2`/`3` keep whatever is toggled first, and queue the next step
-   immediately. Digits are free because candidates never contain digits.
-4. State lives in `.pi/brand.json` (project-local when trusted, global
-   fallback otherwise) and is injected into later turns, so new rounds bias
-   toward the liked vibe, never repeat seen names, and never re-research a
-   name.
+## Fast path
+
+1. `/brand <what the product does>` generates a ranked pool in an isolated model request, then opens the favorites picker.
+2. **Space** toggles, **↑↓** moves, typing filters. **Enter** saves favorites. **Esc** opens a reject/note prompt; Esc again cancels the batch.
+3. Picker actions:
+   - **1**: another batch, using the reserve first
+   - **2**: update the direction and get new names
+   - **3**: choose up to three finalists, then check them
+   - **4**: save the highlighted name as a favorite and get more like it
+4. `/brand finalists` promotes up to three favorites. Older favorites remain taste references, not a research queue. The finalist picker shows newest favorites first; Space toggles, Enter saves, Esc cancels.
+5. `/brand check` checks only finalists. `/brand evidence <name>` shows retained findings and source links.
+
+Default exploration makes **no network availability checks**. `/brand screen` explicitly requests a quick web screen of finalists. `/brand screened` opts into screening **three candidates before display**, three at a time rather than researching an entire speculative pool. Screened mode can add up to 45 seconds after generation.
+
+## Budgets and model routing
+
+- Default naming/assessment model: `openai/gpt-6-luna`. `/brand model <provider/model-id>` changes only this run's naming model, never the main session model. There is no silent model fallback.
+- Generation receives one compact brief, eight recent taste examples and a recent exclusion sample. The complete exclusion set stays local.
+- Each request processes at most 24 proposals. A batch allows at most two model requests, with one refill only when fewer than eight names survive.
+- Request timeout: 30 seconds. Entire generation timeout: 45 seconds. Output: at most 3,000 tokens per request, low reasoning, no provider retries or browsing tools.
+- Up to 24 valid candidates enter the pool. Show 12 at a time and retain the rest, so **More** often needs no model call. A smaller remaining batch is shown rather than regenerating prematurely.
+- A changed direction, product, word/length constraint or model clears the reserve. Rejected batches stay excluded; cancelled batches return to the reserve.
+- No brand state is injected into unrelated agent turns. Generation commands and picker navigation run directly, not through queued main-agent prompts.
+- Checks allow one to three finalists and a 45-second operation budget. Searches run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
+- `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Failed/aborted requests can still incur provider charges not captured in those successful-pool metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
+
+No elapsed-time or quality guarantee is implied by these limits. They are work ceilings; compare real runs with `/brand stats`.
+
+## One current brief
+
+`/brand brief` shows the current product, direction, constraints and model. Historical direction notes are retained but no longer replayed. `/brand note` and `/brand pivot` replace the current direction instead of stacking contradictory instructions.
+
+Defaults: familiar single words, up to 12 characters, inspect `.com` and `.app`, package/handle checks off.
+
+```text
+/brand note familiar, energetic English words
+/brand words single
+/brand words multiple
+/brand length 10
+/brand domains com dev
+/brand packages on
+```
+
+Package and repository checks are opt-in because a consumer app need not have an unused npm name. Changing check requirements retains existing cached findings; request a refresh explicitly if needed.
+
+## Evidence, not legal clearance
+
+The existing `perfect / good / decent / bad / terrible` scale is retained for compatibility, plus **unknown** for incomplete evidence. Labels describe the checks performed, not trademark clearance. Missing signals never default to a clean result. A strong unrelated brand association is separate from a same-category collision.
+
+Checks retain factual reasons, source URLs, bounded excerpts, stage, warnings, requirements and timestamps. Deep checks add domain registry lookups and optional npm/GitHub queries. A registry 404 means **no record found**, not a guarantee a domain is registrable or affordable. Repository/package matches alone do not establish a brand collision. Domains used by active businesses still need contextual review.
+
+Cached legacy results are preserved as-is, including their original scores and dates. They have no retained research sources. No automatic expiration or re-research occurs. `/brand check refresh` or `/brand screen refresh` explicitly refreshes only selected finalists. Upgrading a quick screen to a deep check reuses its web evidence and adds missing registry checks without repeating web search.
+
+Research uses the installed `web_search` tool through Pi's nested-tool API and permission hooks. Enable that extension before checking. Missing tools, blocked searches, failed requests and unsupported model judgments remain unknown. Raw search results and speculative pools do not enter the main conversation; command-dispatched checks use one short request for the owned `brand_check` operation, which terminates without another main-agent explanation.
+
+## App storage and migration
+
+Default run location:
+
+```text
+$DATA/apps/pi-brand/runs/<project-name>-<canonical-path-hash>.json
+```
+
+Each project has its own run. Canonical paths keep symlinked checkouts on the same run; projects sharing a basename remain isolated. If `$DATA` is unset, use `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` remains an explicit override. `/brand stats` displays the actual path.
+
+Run data is version 2 and includes history, favorites, finalists, the current brief, reserve, evidence and generation metrics. Files are atomically replaced with private permissions. Mutations within a Pi process are queued; multiple independent processes should not edit the same run simultaneously.
+
+On first load of a trusted project, an existing `.pi/brand.json` is imported only if the external run does not exist. A byte-for-byte `<run>.json.v1-backup` is created outside the repository before writing the upgraded state. Automatic import leaves the source file intact; remove it only after verifying the external copy. Untrusted projects never read/import local legacy files. Malformed or unsupported run files fail closed, never silently reset.
+
+This repository's existing naming run has already been migrated and its tracked `.pi/brand.json` removed. The original backup is retained under the app-data directory. Git history is not rewritten.
 
 ## Commands
 
-Same steps from the keyboard, for when the picker is already closed:
+```text
+/brand <description>      generate and pick favorites
+/brand more              next reserve batch or bounded generation
+/brand pivot <note>       new direction, then generate
+/brand note <note>        update direction only
+/brand likes             favorites and finalists
+/brand finalists [names]  choose at most three favorites
+/brand check [refresh]    deeper finalist checks
+/brand check <name>       show one cached result
+/brand screen [refresh]   quick finalist web screen
+/brand screened          screen three names before display
+/brand evidence <name>    retained findings and source links
+/brand brief             current brief and model
+/brand model <provider/id>
+/brand words single|multiple
+/brand length <3-30>
+/brand domains <suffixes>
+/brand packages on|off
+/brand stats             path, reserve and generation metrics
+/brand keep <names>      save favorites from a recorded batch
+/brand dismiss <names>   exclude names and remove them from finalists
+/brand excluded          exclusion count
+/brand clear             confirm clearing this run; backup remains
+/brand help
+```
 
-- `/brand <description>` start a naming round
-- `/brand more` another shortlist, same direction (no re-explaining)
-- `/brand pivot <note>` change direction, straight into a new shortlist
-- `/brand check` availability deep-check of everything kept, cache first
-- `/brand check <name>` cached availability for one name
-- `/brand likes` kept names (with scores once checked)
-- `/brand note <text>` add a direction note (e.g. more like X, less cute)
-- `/brand dismiss <name>` reject a name for future rounds (multiple names allowed)
-- `/brand excluded` how many names are permanently filtered out
-- `/brand clear` wipe rounds, likes, notes, and cached availability
-- `/brand help` the list above
+Separate multiple names with commas, especially multiword names. Print/JSON mode saves candidate batches; use `keep` and `finalists` to select without the terminal picker. RPC uses select dialogs, not terminal components.
 
-## Exclusions (hundreds of names are fine)
+Compatibility tools `brand_pick`, `brand_score` and `brand_seen` remain available. The owned workflow uses `brand_generate` and `brand_check`; callers no longer need per-name cache choreography. `brand_score` supports a batch `names` lookup. Manual legacy signal recording remains supported without manufacturing missing signals.
 
-Nothing relies on the model remembering the list. Every name ever shown in a
-round, kept, or rejected is excluded in code:
+## Development
 
-- `brand_pick` filters each incoming candidate against that set, shows only
-  the new ones, and reports which of yours were dropped. A round made entirely
-  of reused names bounces without opening the picker, since showing it would
-  waste the interaction.
-- The picker header carries the running tally (`143 excluded · 2 of yours were
-  dups`), so dropped names are visible rather than silently vanishing.
-- Rejection is explicit: reject-all (or `/brand dismiss <a> <b>`) adds names to
-  `dismissed`, which is deduped case-insensitively and never pruned. Names that
-  were merely not picked stay excluded through the round record.
-- Prompts state the total plus the most recent sample, never pretending to be
-  complete. The injected context says the filtering is enforced in code, so the
-  agent spends no effort re-deriving lists.
-- `brand_seen` is the cheap local batch check: hand it a long candidate pool and
-  it returns which are new, which are kept, rejected, or already shown.
-- `/brand excluded` prints the counts; `/brand check <name>` the cached score.
+```sh
+npm install --ignore-scripts
+npm run check
+npm test
+npm run validate
+```
 
-## Availability score (never researched twice)
+Tests are offline and use fake model/search/fetch responses. They cover migration/backups, persistence, prototype-safe caches, exclusions, reserve reuse, timeouts/cancellation, source validation, cached-check preservation, finalist limits, RPC behavior, narrow terminal rendering and absence of main-context injection. Live model quality and provider latency still require a real naming run.
 
-Scale, already in the UI and storage:
-
-- **perfect**: pretty much no collisions
-- **good**: some unrelated collisions, still commercially possible
-- **decent**: further clashes, but not in the same category. Okay for open
-  source legal wise, and people should not think of the other collision when
-  introduced to this app
-- **bad**: lots of collisions, some in the same category
-- **terrible**: actual high legal risk from a reputable company
-
-Candidates show as `unscored` until researched. The agent still runs the
-research (npm, GitHub, DNS, web), but every result is cached forever in
-`.pi/brand.json` under `availability`, keyed by lowercased name, so a name
-is never researched twice in the same project, not even across sessions.
-
-Flow: before researching a pick, the agent calls the `brand_score` tool
-with just the name. A cached hit is final and must be trusted. Only
-uncached names get fresh research, which the agent saves via `brand_score`
-with the collision signals; `scoreFromSignals()` in `src/scoring.ts` maps
-signals to the scale, and the score is backfilled onto every liked entry
-and round candidate with that name. Recording also works with
-`force: true` to overwrite a stale result.
-
-## Dev
-
-- `npm install`, `npm run check`, `npm test`
+Public headless seams: `pi-brand/generation`, `pi-brand/engine`, `pi-brand/checker`, `pi-brand/store`. They take explicit state and request adapters, so a future CLI or browser interface can reuse the workflow instead of replacing it.

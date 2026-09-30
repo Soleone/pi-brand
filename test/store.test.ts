@@ -7,11 +7,15 @@ import test from "node:test";
 import {
   addLikes,
   getAvailability,
+  getBrandStatePath,
+  getAvailabilityBatch,
   loadBrandState,
   recordAvailability,
   recordRound,
   saveBrandState,
   seenNames,
+  setDirection,
+  setFinalists,
 } from "../src/store.ts";
 
 function tempRoot(): { root: string; home: string; cwd: string } {
@@ -108,6 +112,23 @@ test("recordAvailability caches forever and backfills likes and candidates", () 
   assert.equal(second.state.liked[0].score, "terrible");
 });
 
+test("cache keys cannot inherit or change an object prototype", () => {
+  const { home, cwd } = tempRoot();
+  const run = loadBrandState(cwd, true, {}, home);
+  assert.equal(getAvailability(run.state, "Constructor"), undefined);
+  assert.equal(getAvailability(run.state, "toString"), undefined);
+  recordAvailability(run.state, "constructor", { score: "unknown", reason: "manual" });
+  recordAvailability(run.state, "__proto__", { score: "unknown", reason: "manual" });
+  assert.equal(Object.getPrototypeOf(run.state.availability), Object.prototype);
+  const batch = getAvailabilityBatch(run.state, ["constructor", "__proto__"]);
+  assert.equal(Object.getPrototypeOf(batch.cached), Object.prototype);
+  assert.deepEqual(Object.keys(batch.cached).sort(), ["__proto__", "constructor"]);
+  saveBrandState(run.path, run.state);
+  const reloaded = loadBrandState(cwd, true, {}, home);
+  assert.equal(getAvailability(reloaded.state, "__proto__")?.score, "unknown");
+  assert.equal(Object.getPrototypeOf(reloaded.state.availability), Object.prototype);
+});
+
 test("availability normalize drops invalid entries and keeps old files working", () => {
   const { home, cwd } = tempRoot();
   const fresh = loadBrandState(cwd, true, {}, home);
@@ -133,8 +154,73 @@ test("availability normalize drops invalid entries and keeps old files working",
   assert.equal(loaded.state.availability.good.checkedAt, "2026-01-01T00:00:00.000Z");
 });
 
-test("untrusted projects use the global fallback path", () => {
+test("trusted and untrusted projects use isolated external app paths", () => {
+  const { home, cwd, root } = tempRoot();
+  const env = { DATA: path.join(root, "data") };
+  const loaded = loadBrandState(cwd, false, env, home);
+  assert.equal(loaded.path, getBrandStatePath(cwd, true, env, home));
+  assert.ok(loaded.path.startsWith(path.join(root, "data", "apps", "pi-brand", "runs")));
+  assert.notEqual(loaded.path, getBrandStatePath(path.join(root, "other"), false, env, home));
+  assert.equal(fs.existsSync(loaded.path), false);
+});
+
+test("legacy import keeps historical data and a byte-for-byte external backup", () => {
+  const { home, cwd, root } = tempRoot();
+  const env = { DATA: path.join(root, "data") };
+  const original = JSON.stringify({ version: 1, product: "tasks", rounds: [], liked: [{ name: "Ready", likedAt: "2026-01-01" }], dismissed: ["Gone"], directionNotes: ["short words", "short words"], availability: { ready: { score: "decent", reason: "old check", checkedAt: "2026-01-01" } } });
+  const legacy = path.join(cwd, ".pi", "brand.json");
+  fs.writeFileSync(legacy, original);
+  const imported = loadBrandState(cwd, true, env, home);
+  assert.equal(imported.state.version, 2);
+  assert.deepEqual(imported.state.directionNotes, ["short words"]);
+  assert.equal(imported.state.brief.direction, "short words");
+  assert.equal(imported.state.availability.ready.stage, "legacy");
+  assert.deepEqual(imported.state.finalists, []);
+  assert.equal(fs.readFileSync(`${imported.path}.v1-backup`, "utf8"), original);
+  assert.equal(fs.readFileSync(legacy, "utf8"), original);
+  assert.equal(loadBrandState(cwd, true, env, home).warnings.length, 0);
+  assert.equal(fs.statSync(imported.path).mode & 0o777, 0o600);
+});
+
+test("untrusted legacy state is never imported and explicit overrides are respected", () => {
+  const { home, cwd, root } = tempRoot();
+  fs.writeFileSync(path.join(cwd, ".pi", "brand.json"), "not json");
+  assert.equal(loadBrandState(cwd, false, {}, home).isNew, true);
+  const target = path.join(root, "custom.json");
+  assert.equal(loadBrandState(cwd, true, { PI_BRAND_CONFIG: target }, home).path, target);
+  assert.equal(fs.existsSync(target), false);
+});
+
+test("corrupt and future-version runs fail closed without replacing data", () => {
   const { home, cwd } = tempRoot();
-  const loaded = loadBrandState(cwd, false, {}, home);
-  assert.equal(loaded.path, path.join(home, ".pi", "agent", "pi-brand.json"));
+  const target = getBrandStatePath(cwd, true, {}, home);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, "broken json");
+  assert.throws(() => loadBrandState(cwd, true, {}, home), /Could not read/);
+  assert.equal(fs.readFileSync(target, "utf8"), "broken json");
+  fs.writeFileSync(target, JSON.stringify({ version: 99, rounds: [], liked: [] }));
+  assert.throws(() => loadBrandState(cwd, true, {}, home), /refusing to overwrite/);
+});
+
+test("finalists, direction, reserves, batch cache and evidence survive reload", () => {
+  const { home, cwd } = tempRoot();
+  const run = loadBrandState(cwd, true, {}, home);
+  addLikes(run.state, undefined, [{ name: "Ready" }, { name: "Focus" }, { name: "Done" }, { name: "Set" }]);
+  assert.throws(() => setFinalists(run.state, ["Ready", "Focus", "Done", "Set"]), /at most three/);
+  assert.throws(() => setFinalists(run.state, ["Unknown"]), /favorites/);
+  setFinalists(run.state, ["ready", "READY", "Focus"]);
+  run.state.reserve = [{ name: "Unused" }];
+  setDirection(run.state, "short and confident");
+  assert.deepEqual(run.state.reserve, []);
+  setDirection(run.state, "short and confident");
+  assert.deepEqual(run.state.directionNotes, ["short and confident"]);
+  recordAvailability(run.state, "Ready", { score: "unknown", reason: "partial", stage: "screen", signals: { famousCollision: false }, evidence: [{ source: "web", url: "https://example.com", detail: "citation" }], warnings: ["Missing domain check"], requirementsKey: "requirements" });
+  saveBrandState(run.path, run.state);
+  const reloaded = loadBrandState(cwd, true, {}, home).state;
+  assert.deepEqual(reloaded.finalists, ["Ready", "Focus"]);
+  assert.equal(reloaded.availability.ready.evidence?.[0].detail, "citation");
+  assert.equal(reloaded.availability.ready.signals?.sameSpaceCollision, undefined);
+  const batch = getAvailabilityBatch(reloaded, ["Ready", "READY", "Focus"]);
+  assert.deepEqual(Object.keys(batch.cached), ["ready"]);
+  assert.deepEqual(batch.fresh, ["focus"]);
 });

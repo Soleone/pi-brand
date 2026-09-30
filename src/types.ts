@@ -1,17 +1,14 @@
+import type { Usage } from "@earendil-works/pi-ai";
 import type { AvailabilityScore, CollisionSignals } from "./scoring.ts";
 
-/** One generated name candidate. */
 export interface Candidate {
   name: string;
   flavor?: string;
-  /** Loose style bucket, e.g. playful, plain, invented. */
   style?: string;
-  /** Availability score. Undefined until the deep check runs. */
   score?: AvailabilityScore;
   scoreReason?: string;
 }
 
-/** One generation round. */
 export interface BrandRound {
   id: string;
   createdAt: string;
@@ -20,42 +17,67 @@ export interface BrandRound {
   candidates: Candidate[];
 }
 
-/** A name the user liked via the picker. */
-export interface LikedName {
-  name: string;
-  flavor?: string;
-  style?: string;
+export interface LikedName extends Candidate {
   roundId?: string;
   likedAt: string;
-  score?: AvailabilityScore;
-  scoreReason?: string;
 }
 
-/** One availability deep-check result, cached forever so a name is never researched twice. */
+export interface AvailabilityEvidence {
+  source: "web" | "domain" | "npm" | "github";
+  url: string;
+  detail: string;
+}
+
 export interface AvailabilityRecord {
   score: AvailabilityScore;
   reason: string;
-  /** The raw collision signals behind the score, kept for audit. */
-  signals?: CollisionSignals;
+  signals?: Partial<CollisionSignals>;
   checkedAt: string;
+  stage?: "legacy" | "screen" | "deep";
+  evidence?: AvailabilityEvidence[];
+  warnings?: string[];
+  /** A fingerprint of requirements, not a claim of timeless availability. */
+  requirementsKey?: string;
 }
 
-/** Persisted brand state for one product (one file per project). */
+export interface NamingPreferences {
+  direction: string;
+  singleWord: boolean;
+  maxLength: number;
+  /** Suffixes to inspect, not promises of domain registration. */
+  domains: string[];
+  checkPackages: boolean;
+}
+
+export interface GenerationMetric {
+  createdAt: string;
+  model: string;
+  modelCalls: number;
+  elapsedMs: number;
+  generated: number;
+  usage?: Usage;
+}
+
 export interface BrandState {
-  version: 1;
+  version: 2;
   product: string;
   updatedAt: string;
   rounds: BrandRound[];
   liked: LikedName[];
   dismissed: string[];
+  /** Historical notes are retained but no longer replayed into every prompt. */
   directionNotes: string[];
-  /** Availability cache, keyed by lowercased name. Survives across sessions. */
   availability: Record<string, AvailabilityRecord>;
+  finalists: string[];
+  brief: NamingPreferences;
+  model: string;
+  reserve: Candidate[];
+  generationMetrics: GenerationMetric[];
 }
 
 export function emptyBrandState(product = ""): BrandState {
   return {
-    version: 1,
+    version: 2,
     product,
     updatedAt: new Date().toISOString(),
     rounds: [],
@@ -63,5 +85,10 @@ export function emptyBrandState(product = ""): BrandState {
     dismissed: [],
     directionNotes: [],
     availability: {},
+    finalists: [],
+    brief: { direction: "", singleWord: true, maxLength: 12, domains: ["com", "app"], checkPackages: false },
+    model: "openai/gpt-6-luna",
+    reserve: [],
+    generationMetrics: [],
   };
 }

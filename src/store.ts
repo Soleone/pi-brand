@@ -1,8 +1,7 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 
 import { isAvailabilityScore, type CollisionSignals } from "./scoring.ts";
 import {
@@ -14,6 +13,7 @@ import {
 } from "./types.ts";
 
 const isScore = isAvailabilityScore;
+const CONFIG_DIR_NAME = ".pi";
 
 export interface LoadedBrandState {
   state: BrandState;
@@ -23,11 +23,7 @@ export interface LoadedBrandState {
   warnings: string[];
 }
 
-/**
- * Project-local when trusted (<cwd>/.pi/brand.json), otherwise a global
- * fallback so untrusted projects never touch the repo. One file per product
- * naming effort, so likes never leak across projects.
- */
+/** Run data belongs to the app, not the source repository. */
 export function getBrandStatePath(
   cwd: string,
   trustedProject: boolean,
@@ -36,9 +32,15 @@ export function getBrandStatePath(
 ): string {
   const explicit = env.PI_BRAND_CONFIG?.trim();
   if (explicit) return path.resolve(cwd, expandHome(explicit, homeDirectory));
-  if (trustedProject) return path.join(cwd, CONFIG_DIR_NAME, "brand.json");
-  const directory = env.PI_CODING_AGENT_DIR?.trim() || path.join(homeDirectory, ".pi", "agent");
-  return path.join(directory, "pi-brand.json");
+  let identity = path.resolve(cwd);
+  try { identity = fs.realpathSync(identity); } catch (error) { if (!isMissingFile(error)) throw error; }
+  const slug = path.basename(identity).replace(/[^a-zA-Z0-9_-]/g, "-") || "run";
+  const hash = createHash("sha256").update(identity).digest("hex").slice(0, 12);
+  const data = env.DATA?.trim();
+  const root = data
+    ? path.join(path.resolve(expandHome(data, homeDirectory)), "apps", "pi-brand")
+    : path.join(env.XDG_DATA_HOME || path.join(homeDirectory, ".local", "share"), "pi-brand");
+  return path.join(root, "runs", `${slug}-${hash}.json`);
 }
 
 export function loadBrandState(
@@ -52,33 +54,33 @@ export function loadBrandState(
   try {
     raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
   } catch (error) {
-    if (isMissingFile(error)) {
-      return { state: emptyBrandState(), path: statePath, isNew: true, warnings: [] };
+    if (!isMissingFile(error)) throw new Error(`Could not read ${statePath}: ${errorMessage(error)}`);
+    const legacyPath = path.join(cwd, CONFIG_DIR_NAME, "brand.json");
+    if (trustedProject && !env.PI_BRAND_CONFIG?.trim() && fs.existsSync(legacyPath)) {
+      const original = fs.readFileSync(legacyPath, "utf8");
+      const migrated = normalizeState(JSON.parse(original));
+      if (!migrated) throw new Error(`${legacyPath}: invalid run data; migration stopped.`);
+      const backupPath = `${statePath}.v1-backup`;
+      fs.mkdirSync(path.dirname(statePath), { recursive: true, mode: 0o700 });
+      try { fs.writeFileSync(backupPath, original, { mode: 0o600, flag: "wx" }); }
+      catch (backupError) {
+        if ((backupError as NodeJS.ErrnoException).code !== "EEXIST" || fs.readFileSync(backupPath, "utf8") !== original) throw backupError;
+      }
+      saveBrandState(statePath, migrated);
+      return { state: migrated, path: statePath, isNew: false, warnings: [`Imported ${legacyPath} into ${statePath}. Original retained; byte-for-byte backup: ${backupPath}.`] };
     }
-    return {
-      state: emptyBrandState(),
-      path: statePath,
-      isNew: true,
-      warnings: [`Could not read ${statePath}: ${errorMessage(error)}`],
-    };
+    return { state: emptyBrandState(), path: statePath, isNew: true, warnings: [] };
   }
 
   const parsed = normalizeState(raw);
-  if (!parsed) {
-    return {
-      state: emptyBrandState(),
-      path: statePath,
-      isNew: true,
-      warnings: [`${statePath}: unrecognized shape, starting fresh.`],
-    };
-  }
+  if (!parsed) throw new Error(`${statePath}: unrecognized run data; refusing to overwrite it.`);
   return { state: parsed, path: statePath, isNew: false, warnings: [] };
 }
 
 export function saveBrandState(statePath: string, state: BrandState): void {
   const directory = path.dirname(statePath);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const payload: BrandState = { ...state, version: 1, updatedAt: new Date().toISOString() };
+  const payload: BrandState = { ...state, version: 2, updatedAt: new Date().toISOString() };
   const serialized = `${JSON.stringify(payload, null, 2)}\n`;
   const temporary = path.join(directory, `.pi-brand.${process.pid}.${Date.now()}.tmp`);
   try {
@@ -111,7 +113,7 @@ export function recordRound(
     candidates: input.candidates,
   };
   state.rounds.push(round);
-  if (input.directionHint?.trim()) {
+  if (input.directionHint?.trim() && !state.directionNotes.includes(input.directionHint.trim())) {
     state.directionNotes.push(input.directionHint.trim());
   }
   if (input.product.trim()) state.product = input.product.trim();
@@ -125,11 +127,11 @@ export function addLikes(
   picks: Candidate[],
 ): string[] {
   const added: string[] = [];
-  const known = new Set(state.liked.map((entry) => entry.name.toLocaleLowerCase()));
+  const known = new Set(state.liked.map((entry) => availabilityKey(entry.name)));
   for (const pick of picks) {
     const name = pick.name.trim();
-    if (!name || known.has(name.toLocaleLowerCase())) continue;
-    known.add(name.toLocaleLowerCase());
+    if (!name || known.has(availabilityKey(name))) continue;
+    known.add(availabilityKey(name));
     state.liked.push({
       name,
       flavor: pick.flavor,
@@ -146,14 +148,14 @@ export function addLikes(
 
 /** Cache key for an availability record: case-insensitive, whitespace-trimmed. */
 export function availabilityKey(name: string): string {
-  return name.trim().toLocaleLowerCase();
+  return name.normalize("NFKC").trim().toLocaleLowerCase();
 }
 
 /** Cached availability for a name, if it was ever deep-checked. */
 export function getAvailability(state: BrandState, name: string): AvailabilityRecord | undefined {
   const key = availabilityKey(name);
   if (!key) return undefined;
-  return state.availability[key];
+  return Object.hasOwn(state.availability, key) ? state.availability[key] : undefined;
 }
 
 /**
@@ -164,18 +166,15 @@ export function getAvailability(state: BrandState, name: string): AvailabilityRe
 export function recordAvailability(
   state: BrandState,
   name: string,
-  input: { score: AvailabilityRecord["score"]; reason: string; signals?: CollisionSignals },
+  input: Omit<AvailabilityRecord, "checkedAt">,
 ): AvailabilityRecord {
   const trimmed = name.trim();
   const record: AvailabilityRecord = {
-    score: input.score,
-    reason: input.reason,
-    signals: input.signals,
+    ...input,
     checkedAt: new Date().toISOString(),
   };
-  state.availability[availabilityKey(trimmed)] = record;
-  const matches = (other: string): boolean =>
-    other.trim().toLocaleLowerCase() === availabilityKey(trimmed);
+  Object.defineProperty(state.availability, availabilityKey(trimmed), { value: record, enumerable: true, writable: true, configurable: true });
+  const matches = (other: string): boolean => availabilityKey(other) === availabilityKey(trimmed);
   for (const entry of state.liked) {
     if (matches(entry.name)) {
       entry.score = record.score;
@@ -193,14 +192,41 @@ export function recordAvailability(
   return record;
 }
 
+export function setDirection(state: BrandState, note: string): void {
+  const direction = note.trim().slice(0, 1000);
+  if (!direction) throw new Error("Provide a naming direction.");
+  if (state.brief.direction !== direction) state.reserve = [];
+  state.brief.direction = direction;
+  if (!state.directionNotes.includes(direction)) state.directionNotes.push(direction);
+}
+
+export function setFinalists(state: BrandState, names: string[]): void {
+  const liked = new Map(state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));
+  const requested = [...new Set(names.map(availabilityKey))];
+  if (requested.length > 3) throw new Error("Choose at most three finalists.");
+  if (requested.some((name) => !liked.has(name))) throw new Error("Finalists must come from your favorites.");
+  state.finalists = requested.map((name) => liked.get(name)!);
+}
+
+export function getAvailabilityBatch(state: BrandState, names: string[]): { cached: Record<string, AvailabilityRecord>; fresh: string[] } {
+  const cached: Record<string, AvailabilityRecord> = {};
+  const fresh: string[] = [];
+  for (const name of [...new Set(names.map(availabilityKey))]) {
+    const hit = getAvailability(state, name);
+    if (hit) Object.defineProperty(cached, name, { value: hit, enumerable: true });
+    else fresh.push(name);
+  }
+  return { cached, fresh };
+}
+
 /** Names seen in any round, lowercased, so new rounds avoid repeats. */
 export function seenNames(state: BrandState): Set<string> {
   const seen = new Set<string>();
   for (const round of state.rounds) {
-    for (const candidate of round.candidates) seen.add(candidate.name.toLocaleLowerCase());
+    for (const candidate of round.candidates) seen.add(availabilityKey(candidate.name));
   }
-  for (const entry of state.liked) seen.add(entry.name.toLocaleLowerCase());
-  for (const name of state.dismissed) seen.add(name.toLocaleLowerCase());
+  for (const entry of state.liked) seen.add(availabilityKey(entry.name));
+  for (const name of state.dismissed) seen.add(availabilityKey(name));
   return seen;
 }
 
@@ -209,12 +235,12 @@ export function seenNames(state: BrandState): Set<string> {
  * case-insensitively. Returns how many were new, so callers can report it.
  */
 export function dismissNames(state: BrandState, names: Iterable<string>): string[] {
-  const known = new Set(state.dismissed.map((name) => name.toLocaleLowerCase()));
+  const known = new Set(state.dismissed.map(availabilityKey));
   const added: string[] = [];
   for (const raw of names) {
     const name = raw.trim();
-    if (!name || known.has(name.toLocaleLowerCase())) continue;
-    known.add(name.toLocaleLowerCase());
+    if (!name || known.has(availabilityKey(name))) continue;
+    known.add(availabilityKey(name));
     state.dismissed.push(name);
     added.push(name);
   }
@@ -227,16 +253,19 @@ export function dismissNames(state: BrandState, names: Iterable<string>): string
  * truncated prompt list, so it holds at hundreds of names.
  */
 export function excludedNames(state: BrandState): { seen: Set<string>; kept: Set<string> } {
-  const kept = new Set(state.liked.map((entry) => entry.name.toLocaleLowerCase()));
+  const kept = new Set(state.liked.map((entry) => availabilityKey(entry.name)));
   const seen = seenNames(state);
-  for (const name of state.dismissed) seen.add(name.toLocaleLowerCase());
+  for (const name of state.dismissed) seen.add(availabilityKey(name));
   return { seen, kept };
 }
 
 function normalizeState(raw: unknown): BrandState | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
+  if (record.version !== 1 && record.version !== 2) return undefined;
+  if (!Array.isArray(record.rounds) || !Array.isArray(record.liked)) return undefined;
   const state = emptyBrandState(typeof record.product === "string" ? record.product : "");
+  if (typeof record.updatedAt === "string") state.updatedAt = record.updatedAt;
   if (Array.isArray(record.rounds)) {
     for (const entry of record.rounds) {
       const round = normalizeRound(entry);
@@ -276,29 +305,55 @@ function normalizeState(raw: unknown): BrandState | undefined {
       if (!key || !rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
       const entry = rawEntry as Record<string, unknown>;
       if (!isScore(entry.score)) continue;
-      state.availability[key] = {
+      Object.defineProperty(state.availability, key, { enumerable: true, writable: true, configurable: true, value: {
         score: entry.score,
         reason: typeof entry.reason === "string" && entry.reason ? entry.reason : entry.score,
-        signals: isCollisionSignals(entry.signals) ? entry.signals : undefined,
+        signals: normalizeSignals(entry.signals),
         checkedAt: typeof entry.checkedAt === "string" ? entry.checkedAt : new Date().toISOString(),
-      };
+        stage: entry.stage === "screen" || entry.stage === "deep" ? entry.stage : "legacy",
+        evidence: normalizeEvidence(entry.evidence),
+        warnings: Array.isArray(entry.warnings) ? entry.warnings.filter((warning): warning is string => typeof warning === "string").slice(0, 20) : undefined,
+        requirementsKey: typeof entry.requirementsKey === "string" ? entry.requirementsKey : undefined,
+      } });
     }
+  }
+  state.directionNotes = [...new Set(state.directionNotes)];
+  state.brief.direction = state.directionNotes.at(-1)?.slice(0, 1000) ?? "";
+  const brief = record.brief;
+  if (brief && typeof brief === "object" && !Array.isArray(brief)) {
+    const prefs = brief as Record<string, unknown>;
+    if (typeof prefs.direction === "string") state.brief.direction = prefs.direction.slice(0, 1000);
+    if (typeof prefs.singleWord === "boolean") state.brief.singleWord = prefs.singleWord;
+    if (typeof prefs.maxLength === "number" && Number.isInteger(prefs.maxLength) && prefs.maxLength >= 3 && prefs.maxLength <= 30) state.brief.maxLength = prefs.maxLength;
+    if (Array.isArray(prefs.domains)) state.brief.domains = prefs.domains.filter((suffix): suffix is string => typeof suffix === "string" && /^[a-z]{2,12}$/.test(suffix)).slice(0, 3);
+    if (typeof prefs.checkPackages === "boolean") state.brief.checkPackages = prefs.checkPackages;
+  }
+  if (typeof record.model === "string" && /^[^/]+\/.+$/.test(record.model)) state.model = record.model;
+  if (Array.isArray(record.reserve)) state.reserve = normalizeRound({ candidates: record.reserve })?.candidates.slice(0, 24) ?? [];
+  if (Array.isArray(record.finalists)) {
+    const liked = new Map(state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));
+    state.finalists = [...new Set(record.finalists.filter((name): name is string => typeof name === "string").map((name) => liked.get(availabilityKey(name))).filter((name): name is string => !!name))].slice(0, 3);
+  }
+  if (Array.isArray(record.generationMetrics)) {
+    state.generationMetrics = record.generationMetrics.filter((item) => item && typeof item === "object" && typeof item.model === "string" && Number.isFinite(item.elapsedMs) && Number.isFinite(item.modelCalls) && Number.isFinite(item.generated)).slice(-50);
   }
   return state;
 }
 
-/** Guard for cached collision signals: all-or-nothing, never half-trusted. */
-function isCollisionSignals(value: unknown): value is CollisionSignals {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const signals = value as Record<string, unknown>;
-  return (
-    typeof signals.famousCollision === "boolean" &&
-    typeof signals.sameSpaceCollision === "boolean" &&
-    typeof signals.giantAssociation === "boolean" &&
-    typeof signals.unrelatedCount === "number" &&
-    Number.isFinite(signals.unrelatedCount) &&
-    typeof signals.comParked === "boolean"
-  );
+function normalizeSignals(value: unknown): Partial<CollisionSignals> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const signals: Partial<CollisionSignals> = {};
+  for (const key of ["famousCollision", "sameSpaceCollision", "giantAssociation", "comParked"] as const) {
+    if (typeof raw[key] === "boolean") signals[key] = raw[key];
+  }
+  if (typeof raw.unrelatedCount === "number" && Number.isFinite(raw.unrelatedCount)) signals.unrelatedCount = Math.max(0, Math.floor(raw.unrelatedCount));
+  return signals;
+}
+
+function normalizeEvidence(value: unknown): AvailabilityRecord["evidence"] {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item) => item && typeof item === "object" && ["web", "domain", "npm", "github"].includes(item.source) && typeof item.url === "string" && /^https?:\/\//.test(item.url) && typeof item.detail === "string").slice(0, 20).map((item) => ({ source: item.source, url: item.url, detail: item.detail.slice(0, 2000) }));
 }
 
 function normalizeRound(entry: unknown): BrandRound | undefined {

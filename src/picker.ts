@@ -10,12 +10,14 @@ export interface PickOptions {
   product?: string;
   /** Names kept from earlier rounds, shown so picks read as accumulating, not resetting. */
   likedSoFar?: string[];
-  /** Names whose availability was already deep-checked in this project. */
-  checkedNames?: string[];
+  direction?: string;
   /** How many of this round's candidates were dropped as already seen. */
   droppedDuplicates?: string[];
   /** Total names permanently excluded in this project, for the header tally. */
   excludedTotal?: number;
+  selectionOnly?: boolean;
+  maxSelection?: number;
+  initialNames?: string[];
 }
 
 type PickerContext = ExtensionContext | ExtensionCommandContext;
@@ -98,14 +100,14 @@ export async function pickNames(
   if (!ctx.hasUI) return undefined;
 
   const ui = ctx.ui;
-  if (typeof ui.custom !== "function") {
-    return await confirmLoopFallback(ctx, candidates);
+  if (ctx.mode !== "tui" || typeof ui.custom !== "function") {
+    return await selectLoopFallback(ctx, candidates, options);
   }
 
   const title = options.title ?? "Pick favorites";
   const alreadyLiked = new Set((options.likedSoFar ?? []).map((name) => name.toLocaleLowerCase()));
   const keptNames = (options.likedSoFar ?? []).map((name) => name.trim()).filter(Boolean);
-  const checkedNames = new Set((options.checkedNames ?? []).map((name) => name.toLocaleLowerCase()));
+  const hasScores = candidates.some((candidate) => candidate.score !== undefined);
 
   // Fixed column widths so rows stay aligned while filtering.
   const nameWidth = Math.max(4, ...candidates.map((c) => visibleWidth(c.name)));
@@ -122,7 +124,9 @@ export async function pickNames(
     let query = "";
     let cursor = 0;
     let scroll = 0;
-    const selected = new Set<string>();
+    const available = new Set(candidates.map((candidate) => candidate.name));
+    const selected = new Set((options.initialNames ?? []).filter((name) => available.has(name)).slice(0, options.maxSelection ?? candidates.length));
+    let selectionWarning = "";
     let finished = false;
     // "reject" nukes the round, "direction" keeps the picks and pivots.
     let noteMode: "none" | "reject" | "direction" = "none";
@@ -179,7 +183,7 @@ export async function pickNames(
           : paddedName;
 
       const paddedScore = padEndVisible(score, scoreWidth);
-      const scoreCell = theme.fg(scoreColor(candidate.score), paddedScore);
+      const scoreCell = hasScores ? `  ${theme.fg(scoreColor(candidate.score), paddedScore)}` : "";
 
       const liked = alreadyLiked.has(candidate.name.toLocaleLowerCase());
       const styleSuffix = candidate.style ? `  ${theme.fg("dim", `· ${candidate.style}`)}` : "";
@@ -188,7 +192,7 @@ export async function pickNames(
         `${candidate.style ? `  · ${candidate.style}` : ""}${liked ? " ♥" : ""}`,
       );
 
-      const prefixWidth = 1 + 1 + 1 + 1 + nameWidth + 2 + scoreWidth + 2;
+      const prefixWidth = 1 + 1 + 1 + 1 + nameWidth + (hasScores ? 2 + scoreWidth : 0) + 2;
       const maxFlavor = Math.max(0, contentWidth - prefixWidth - suffixWidth);
       let flavorCell = "";
       if (candidate.flavor && maxFlavor > 0) {
@@ -196,7 +200,7 @@ export async function pickNames(
         flavorCell = theme.fg("muted", truncated);
       }
 
-      return `${cursorCell} ${checkCell} ${nameCell}  ${scoreCell}  ${flavorCell}${styleSuffix}${heartSuffix}`;
+      return `${cursorCell} ${checkCell} ${nameCell}${scoreCell}  ${flavorCell}${styleSuffix}${heartSuffix}`;
     };
 
     // Custom list component so rows can truncate to the live viewport width
@@ -207,11 +211,11 @@ export async function pickNames(
         clampCursor(rows);
         const contentWidth = Math.max(1, width - 2);
         if (rows.length === 0) {
-          return [` ${theme.fg("warning", "No matches — backspace to clear the filter.")}`];
+          return [truncateToWidth(` ${theme.fg("warning", "No matches. Backspace to clear the filter.")}`, width, "…")];
         }
         const visible = rows.slice(scroll, scroll + PAGE_SIZE);
         const lines = visible.map((candidate, index) =>
-          ` ${renderRow(candidate, scroll + index === cursor, contentWidth)}`,
+          truncateToWidth(` ${renderRow(candidate, scroll + index === cursor, contentWidth)}`, width, "…"),
         );
         if (rows.length > PAGE_SIZE) {
           lines.push(
@@ -261,35 +265,26 @@ export async function pickNames(
       if (keptNames.length === 0) {
         keptLine.setText("");
       } else {
-        const shown = keptNames.slice(-12);
-        const prefix = keptNames.length > 12 ? `+${keptNames.length - 12} more · ` : "";
+        const shown = keptNames.slice(-6);
+        const prefix = keptNames.length > 6 ? `+${keptNames.length - 6} more · ` : "";
         keptLine.setText(
-          `${theme.fg("error", ICON_HEART)} ${theme.fg("muted", `Kept (${keptNames.length}): `)}${theme.fg("text", `${prefix}${shown.join(", ")}`)}`,
+          `${theme.fg("error", ICON_HEART)} ${theme.fg("muted", `Favorites (${keptNames.length}): `)}${theme.fg("text", `${prefix}${shown.join(", ")}`)}`,
         );
       }
 
-      // Shortlist = previously kept plus this round's toggles, deduped.
-      const shortlist = [...new Set([...keptNames, ...selectedNames()])];
-      const uncheckedCount = shortlist.filter(
-        (name) => !checkedNames.has(name.toLocaleLowerCase()),
-      ).length;
-      const availabilityLabel =
-        shortlist.length === 0
-          ? "availability: nothing kept"
-          : uncheckedCount === 0
-            ? `availability: all ${shortlist.length} checked`
-            : `availability: ${uncheckedCount} of ${shortlist.length} unchecked`;
+      const availabilityLabel = "choose up to 3 finalists";
 
       const key = (label: string): string => theme.fg("accent", label);
       const sep = theme.fg("dim", "  ·  ");
 
-      if (noteMode === "none") {
+      if (options.selectionOnly) {
+        actionLine.setText(`Save up to ${options.maxSelection ?? 3} finalists. ${selected.size} selected.`);
+        footerLine.setText(selectionWarning || "Space: toggle · Enter: save · Esc: cancel · Type: filter");
+      } else if (noteMode === "none") {
         actionLine.setText(
-          `${theme.fg("muted", "next")}  ` +
-            `${key("⏎")} ${theme.fg("dim", selected.size > 0 ? `keep ${selected.size}` : "react")}${sep}` +
-            `${key("1")} ${theme.fg("dim", "more, same direction")}${sep}` +
-            `${key("2")} ${theme.fg("dim", "new direction…")}${sep}` +
-            `${key("3")} ${theme.fg("dim", availabilityLabel)}`,
+          `${key("⏎")} ${theme.fg("dim", selected.size > 0 ? `save ${selected.size}` : "reject round")}${sep}` +
+            `${key("1")} ${theme.fg("dim", "more")}${sep}${key("2")} ${theme.fg("dim", "direction…")}\n` +
+            `${key("3")} ${theme.fg("dim", availabilityLabel)}${sep}${key("4")} ${theme.fg("dim", "more like highlighted")}`,
         );
         footerLine.setText(
           `${theme.fg("muted", "␣")} ${theme.fg("dim", "toggle")}  ${theme.fg("dim", "·")}  ` +
@@ -310,9 +305,9 @@ export async function pickNames(
               );
         actionLine.setText(
           askingDirection
-            ? `${theme.fg("accent", `New direction — ${selected.size} kept${noteText ? "" : " (empty = same direction)"}.`)}\n` +
+            ? `${theme.fg("accent", `New direction: ${selected.size} kept${noteText ? "" : " (empty = same direction)"}.`)}\n` +
                 `${theme.fg("muted", "> ")}${prompt}`
-            : `${theme.fg("warning", `Reject all ${candidates.length} — nothing kept from this round.`)}\n` +
+            : `${theme.fg("warning", `Reject all ${candidates.length}: nothing kept from this round.`)}\n` +
                 `${theme.fg("muted", "> ")}${prompt}`,
         );
         const escHint = askingDirection || noteText.length > 0 ? "back" : "cancel";
@@ -335,7 +330,7 @@ export async function pickNames(
     render();
 
     return {
-      render: (width) => container.render(width),
+      render: (width) => container.render(width).map((line) => truncateToWidth(line, Math.max(0, width), "…")),
       invalidate: () => container.invalidate(),
       handleInput: (data) => {
         if (noteMode !== "none") {
@@ -379,12 +374,13 @@ export async function pickNames(
           return;
         }
         if (matchesKey(data, Key.escape)) {
+          if (options.selectionOnly) { finish(undefined); return; }
           noteMode = "reject";
           noteText = "";
           render();
           return;
         }
-        if (matchesKey(data, Key.ctrl("r"))) {
+        if (!options.selectionOnly && matchesKey(data, Key.ctrl("r"))) {
           noteMode = "reject";
           noteText = "";
           render();
@@ -392,18 +388,23 @@ export async function pickNames(
         }
         // 1/2/3 are the next-step keys. Candidate names never contain digits,
         // so these keys cost the filter nothing.
-        if (data === "1") {
+        if (!options.selectionOnly && data === "1") {
           finish({ kind: "action", action: "more-same", names: selectedNames() });
           return;
         }
-        if (data === "2") {
+        if (!options.selectionOnly && data === "2") {
           noteMode = "direction";
           noteText = "";
           render();
           return;
         }
-        if (data === "3") {
+        if (!options.selectionOnly && data === "3") {
           finish({ kind: "action", action: "check", names: selectedNames() });
+          return;
+        }
+        if (!options.selectionOnly && data === "4") {
+          const current = filtered()[cursor];
+          if (current) finish({ kind: "action", action: "more-new", names: [...new Set([...selectedNames(), current.name])], note: `More like "${current.name}" in meaning and feel. ${options.direction ?? "Keep the existing spelling and word constraints."}` });
           return;
         }
         if (matchesKey(data, Key.enter)) {
@@ -412,7 +413,7 @@ export async function pickNames(
             finish(undefined);
             return;
           }
-          if (selected.size === 0) {
+          if (selected.size === 0 && !options.selectionOnly) {
             noteMode = "reject";
             noteText = "";
             render();
@@ -429,9 +430,11 @@ export async function pickNames(
           const rows = filtered();
           const current = rows[cursor];
           if (current) {
-            if (selected.has(current.name)) selected.delete(current.name);
-            else selected.add(current.name);
-            if (cursor < rows.length - 1) cursor += 1;
+            if (selected.has(current.name)) { selected.delete(current.name); selectionWarning = ""; }
+            else if (options.maxSelection && selected.size >= options.maxSelection) {
+              selectionWarning = `At most ${options.maxSelection} finalists. Deselect one first.`;
+            } else { selected.add(current.name); selectionWarning = ""; }
+            if (!selectionWarning && cursor < rows.length - 1) cursor += 1;
             render();
           }
           return;
@@ -493,16 +496,20 @@ export async function pickNames(
   });
 }
 
-/** Fallback for RPC/test contexts without custom TUI: confirm each name. */
-async function confirmLoopFallback(
-  ctx: PickerContext,
-  candidates: Candidate[],
-): Promise<PickOutcome | undefined> {
-  const picks: string[] = [];
-  for (const candidate of candidates) {
-    const label = candidate.flavor ? `${candidate.name} (${candidate.flavor})` : candidate.name;
-    const yes = await ctx.ui.confirm("Like this name?", label);
-    if (yes) picks.push(candidate.name);
+/** RPC supports select dialogs but not custom terminal components. */
+async function selectLoopFallback(ctx: PickerContext, candidates: Candidate[], options: PickOptions): Promise<PickOutcome | undefined> {
+  const picks = [...new Set(options.initialNames ?? [])].filter((name) => candidates.some((candidate) => candidate.name === name)).slice(0, options.maxSelection ?? candidates.length);
+  const finish = "Save selection";
+  while (true) {
+    const choices = [finish, ...candidates.map((candidate) => `${picks.includes(candidate.name) ? "[x]" : "[ ]"} ${candidate.name}`)];
+    const choice = await ctx.ui.select(options.title ?? "Pick favorites", choices);
+    if (!choice) return undefined;
+    if (choice === finish) return { kind: "picked", names: picks };
+    const candidate = candidates.find((entry) => choice === `[${picks.includes(entry.name) ? "x" : " "}] ${entry.name}`);
+    if (!candidate) continue;
+    const index = picks.indexOf(candidate.name);
+    if (index >= 0) picks.splice(index, 1);
+    else if (!options.maxSelection || picks.length < options.maxSelection) picks.push(candidate.name);
+    else ctx.ui.notify(`Choose at most ${options.maxSelection} finalists. Deselect one first.`, "warning");
   }
-  return { kind: "picked", names: picks };
 }
