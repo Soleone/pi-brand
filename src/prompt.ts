@@ -18,8 +18,8 @@ export function buildMorePrompt(_state: BrandState): string {
 }
 
 export function buildAvailabilityPrompt(state: BrandState, stage: "screen" | "deep" = "deep", refresh = false, names = state.finalists, allFavorites = false): string {
-  if (allFavorites) return `Call brand_check once with stage ${stage}, refresh ${refresh}, and allFavorites true to check every saved favorite in batches of up to three. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names.`;
+  if (allFavorites) return `Call brand_check once with stage ${stage}, refresh ${refresh}, and allFavorites true to check every saved favorite in batches of up to three. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
   if (names.length === 0) return "Choose up to three favorites as finalists with /brand finalists first.";
   const target = names.length === 1 ? "saved favorite" : "saved favorites";
-  return `Call brand_check once with stage ${stage}, refresh ${refresh}, and names ${JSON.stringify(names)} for these ${target}. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names.`;
+  return `Call brand_check once with stage ${stage}, refresh ${refresh}, and names ${JSON.stringify(names)} for these ${target}. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
 }

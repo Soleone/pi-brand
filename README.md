@@ -73,7 +73,7 @@ Checks retain factual reasons, source URLs, bounded excerpts, stage, warnings, r
 
 Cached legacy results are preserved as-is, including their original scores and dates. They have no retained research sources. No automatic expiration or re-research occurs. `/brand check refresh` or `/brand screen refresh` explicitly refreshes selected finalists; the favorites menu can refresh an individual saved favorite. Upgrading a quick screen to a deep check reuses its web evidence and adds missing registry checks without repeating web search.
 
-Research uses the installed `web_search` tool through Pi's nested-tool API and permission hooks. Enable that extension before checking. Missing tools, blocked searches, failed requests and unsupported model judgments remain unknown. Raw search results and speculative pools do not enter the main conversation; command-dispatched checks use one short request for the owned `brand_check` operation, which terminates without another main-agent explanation.
+Research uses the installed `web_search` tool through Pi's nested-tool API and permission hooks. Enable that extension before checking. Missing tools, blocked searches, failed requests and unsupported model judgments remain unknown. Raw search results and speculative pools do not enter the main conversation; command-dispatched checks use one short request for the owned `brand_check` operation, then automatically return a concise completion response. No manual `continue` is needed.
 
 ## App storage and migration
 

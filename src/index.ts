@@ -151,7 +151,7 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
     ? `${targets.length} favorites checked (${stage}, cache first; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen Browse favorites to see every status.` : ""}`
     : summaries.join("\n");
   ctx.ui.notify(`${summary}\nSources: /brand evidence <name>. These findings are not legal clearance.`, "info");
-  return textResult(summary, { records, cached }, usage);
+  return textResult(summary, { records, cached }, usage, false);
 }
 
 export default function registerPiBrand(pi: ExtensionAPI): void {

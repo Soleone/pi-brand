@@ -23,10 +23,13 @@ test("check prompt names only finalists and delegates all bookkeeping", () => {
   assert.match(prompt, /brand_check once/);
   assert.match(prompt, /Finalist/);
   assert.match(prompt, /names \["Finalist"\]/);
+  assert.match(prompt, /After it returns, summarize completion.*without calling the tool again/);
   assert.doesNotMatch(prompt, /Favorite|brand_score|npm/);
   assert.match(buildAvailabilityPrompt(state, "screen", true), /stage screen, refresh true/);
   assert.match(buildAvailabilityPrompt(state, "deep", true, ["Favorite"]), /names \["Favorite"\].*saved favorite/);
-  assert.match(buildAvailabilityPrompt(state, "deep", false, undefined, true), /allFavorites true.*batches of up to three/);
+  const allFavoritesPrompt = buildAvailabilityPrompt(state, "deep", false, undefined, true);
+  assert.match(allFavoritesPrompt, /allFavorites true.*batches of up to three/);
+  assert.match(allFavoritesPrompt, /After it returns, summarize completion.*without calling the tool again/);
 });
 
 test("empty finalist list never asks for broad research", () => {

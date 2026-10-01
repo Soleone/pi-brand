@@ -156,6 +156,7 @@ test("Check all is in the favorites list and checks every favorite in batches of
     assert.deepEqual(app.state().finalists, []);
     for (const name of ["able", "bold", "calm", "daring"]) assert.equal(app.state().availability[name].stage, "screen");
     assert.match(result.content[0].text, /4 favorites checked/);
+    assert.equal(result.terminate, undefined);
   } finally { app.cleanup(); }
 });
 
@@ -183,7 +184,7 @@ test("brand_check can update one saved favorite without changing finalists", asy
   } finally { app.cleanup(); }
 });
 
-test("owned cached checks need no web tool or model call and terminate without main follow-up", async () => {
+test("owned cached checks need no web tool or model call and allow automatic completion", async () => {
   const app = harness();
   try {
     app.choices.push("[ ] Able", "Save selection");
@@ -193,7 +194,7 @@ test("owned cached checks need no web tool or model call and terminate without m
     const checkedAt = app.state().availability.able.checkedAt;
     const toolCtx = { ...app.ctx, tools: [], executeTool: () => { throw new Error("must not search"); } } as unknown as ExtensionToolContext;
     const result = await app.tools.get("brand_check")!.execute("check", {} as never, undefined, undefined, toolCtx);
-    assert.equal(result.terminate, true);
+    assert.equal(result.terminate, undefined);
     assert.equal(app.modelCalls(), 1);
     assert.equal(app.state().availability.able.checkedAt, checkedAt);
     assert.match(result.content[0].text, /cached/);
