@@ -18,7 +18,7 @@ Requires Pi **0.99.1 or newer** for nested tools and provider-neutral model requ
 5. `/brand check` checks only finalists. `/brand evidence <name>` shows retained findings and source links.
 6. Once a product brief exists, **`/brand`**, `/brand overview`, and `/brand status` open the overview without generating. Saving, rejecting or cancelling a favorites round also returns there.
 
-The overview shows favorites, finalists and their cached-check status, reserve, seen/excluded count, direction, and both model roles. Browse all favorites, choose finalists, inspect evidence/history, edit the brief, change models, or continue naming. Terminal lists are searchable and show at most ten entries at a time. Esc backs out of subviews; Esc in the overview returns to chat. RPC uses supported select/input dialogs for the same actions.
+The overview shows favorites, finalists and their cached-check status, reserve, seen/excluded count, direction, and both model roles. Browse all favorites, choose finalists, inspect evidence/history, edit the brief, change models, or continue naming. The favorites list shows each item's status and has a cache-first **Check all favorites** action. It checks in batches of three; selecting one favorite offers individual deep/quick checks and explicit refreshes, without changing finalists. Terminal lists are searchable and show at most ten entries at a time. Esc backs out of subviews; Esc in the overview returns to chat. RPC uses supported select/input dialogs for the same actions.
 
 You do not have to generate more names to finish shortlisting. With many favorites, go straight to **Choose finalists**. See [UI navigation and boundaries](docs/ui-navigation.md) for the complete flow and remaining command-only operations.
 
@@ -35,7 +35,7 @@ Default exploration makes **no network availability checks**. `/brand screen` ex
 - Up to 24 valid candidates enter the pool. Show 12 at a time and retain the rest, so **More** often needs no model call. A smaller remaining batch is shown rather than regenerating prematurely.
 - A changed direction, product, word/length constraint or model clears the reserve. Rejected batches stay excluded; cancelled batches return to the reserve.
 - No brand state is injected into unrelated agent turns. Generation commands and picker navigation run directly, not through queued main-agent prompts.
-- Checks allow one to three finalists and a 45-second operation budget. Searches run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
+- Each check batch contains at most three finalists or favorites and has a 45-second operation budget. **Check all favorites** runs cache-first deep checks in sequential batches of three. Searches within a batch run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
 - `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Assessment costs and failed/aborted requests are not included in these generation-only metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
 
 ### Context isolation and prompt caching
@@ -71,7 +71,7 @@ The existing `perfect / good / decent / bad / terrible` scale is retained for co
 
 Checks retain factual reasons, source URLs, bounded excerpts, stage, warnings, requirements and timestamps. Deep checks add domain registry lookups and optional npm/GitHub queries. A registry 404 means **no record found**, not a guarantee a domain is registrable or affordable. Repository/package matches alone do not establish a brand collision. Domains used by active businesses still need contextual review.
 
-Cached legacy results are preserved as-is, including their original scores and dates. They have no retained research sources. No automatic expiration or re-research occurs. `/brand check refresh` or `/brand screen refresh` explicitly refreshes only selected finalists. Upgrading a quick screen to a deep check reuses its web evidence and adds missing registry checks without repeating web search.
+Cached legacy results are preserved as-is, including their original scores and dates. They have no retained research sources. No automatic expiration or re-research occurs. `/brand check refresh` or `/brand screen refresh` explicitly refreshes selected finalists; the favorites menu can refresh an individual saved favorite. Upgrading a quick screen to a deep check reuses its web evidence and adds missing registry checks without repeating web search.
 
 Research uses the installed `web_search` tool through Pi's nested-tool API and permission hooks. Enable that extension before checking. Missing tools, blocked searches, failed requests and unsupported model judgments remain unknown. Raw search results and speculative pools do not enter the main conversation; command-dispatched checks use one short request for the owned `brand_check` operation, which terminates without another main-agent explanation.
 

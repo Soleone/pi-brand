@@ -22,8 +22,11 @@ test("check prompt names only finalists and delegates all bookkeeping", () => {
   const prompt = buildAvailabilityPrompt(state);
   assert.match(prompt, /brand_check once/);
   assert.match(prompt, /Finalist/);
+  assert.match(prompt, /names \["Finalist"\]/);
   assert.doesNotMatch(prompt, /Favorite|brand_score|npm/);
-  assert.match(buildAvailabilityPrompt(state, "screen", true), /stage screen and refresh true/);
+  assert.match(buildAvailabilityPrompt(state, "screen", true), /stage screen, refresh true/);
+  assert.match(buildAvailabilityPrompt(state, "deep", true, ["Favorite"]), /names \["Favorite"\].*saved favorite/);
+  assert.match(buildAvailabilityPrompt(state, "deep", false, undefined, true), /allFavorites true.*batches of up to three/);
 });
 
 test("empty finalist list never asks for broad research", () => {

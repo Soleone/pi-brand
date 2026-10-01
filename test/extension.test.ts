@@ -115,6 +115,74 @@ test("finalist selection is distinct from favorites and check dispatches just on
   } finally { app.cleanup(); }
 });
 
+test("favorite menu shows per-name status and dispatches selected-name checks", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection");
+    await app.command("tasks");
+    app.choices.push("Browse favorites", "Able · not checked", "Refresh status (deep)");
+    await app.command("overview");
+    assert.ok(app.dialogs.find((dialog) => dialog.title.startsWith("Favorites"))?.choices.includes("Able · not checked"));
+    assert.match(app.messages[0], /brand_check once/);
+    assert.match(app.messages[0], /stage deep, refresh true, and names \["Able"\]/);
+  } finally { app.cleanup(); }
+});
+
+test("Check all is in the favorites list and checks every favorite in batches of three", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "[ ] Bold", "[ ] Calm", "[ ] Daring", "Save selection");
+    await app.command("tasks");
+    app.choices.push("Browse favorites", "Check all favorites (deep, cache first · 4)");
+    await app.command("overview");
+    const list = app.dialogs.find((dialog) => dialog.title.startsWith("Favorites"))!;
+    assert.ok(list.choices.includes("Able · not checked"));
+    assert.ok(list.choices.includes("Daring · not checked"));
+    assert.match(app.messages[0], /allFavorites true/);
+
+    let searches = 0;
+    const toolCtx = {
+      ...app.ctx,
+      tools: [{ name: "web_search" }],
+      executeTool: async (_name: string, args: { queries: string[] }) => {
+        searches++;
+        const name = args.queries[0].match(/^\"([^\"]+)\"/)![1];
+        return { isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: `https://example.com/${name}`, snippet: "source-linked finding" }] }) }] } };
+      },
+    } as unknown as ExtensionToolContext;
+    const result = await app.tools.get("brand_check")!.execute("check", { stage: "screen", allFavorites: true } as never, undefined, undefined, toolCtx);
+    assert.equal(searches, 4);
+    assert.equal(app.modelCalls(), 3);
+    assert.deepEqual(app.state().finalists, []);
+    for (const name of ["able", "bold", "calm", "daring"]) assert.equal(app.state().availability[name].stage, "screen");
+    assert.match(result.content[0].text, /4 favorites checked/);
+  } finally { app.cleanup(); }
+});
+
+test("brand_check can update one saved favorite without changing finalists", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "[ ] Bold", "Save selection");
+    await app.command("tasks");
+    let searches = 0;
+    const toolCtx = {
+      ...app.ctx,
+      tools: [{ name: "web_search" }],
+      executeTool: async (_name: string, args: { queries: string[] }) => {
+        searches++;
+        const name = args.queries[0].match(/^\"([^\"]+)\"/)![1];
+        return { isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: `https://example.com/${name}`, snippet: "source-linked finding" }] }) }] } };
+      },
+    } as unknown as ExtensionToolContext;
+    const result = await app.tools.get("brand_check")!.execute("check", { stage: "screen", names: ["Able"] } as never, undefined, undefined, toolCtx);
+    assert.equal(searches, 1);
+    assert.deepEqual(app.state().finalists, []);
+    assert.equal(app.state().availability.able.stage, "screen");
+    assert.equal(app.state().availability.bold, undefined);
+    assert.match(result.content[0].text, /Able:/);
+  } finally { app.cleanup(); }
+});
+
 test("owned cached checks need no web tool or model call and terminate without main follow-up", async () => {
   const app = harness();
   try {
@@ -249,7 +317,7 @@ test("overview subviews return without model calls and a dismissed favorite leav
     app.choices.push("[ ] Able", "Save selection", "Close overview");
     await app.command("tasks");
     await app.command("finalists Able");
-    app.choices.push("History and exclusions", "Reserved names", "Back", "Edit brief", "direction", "Browse favorites", "Able", "Read evidence", "Choose finalists", "Save selection", "Close overview");
+    app.choices.push("History and exclusions", "Reserved names", "Back", "Edit brief", "direction", "Browse favorites", "Able · not checked", "Read evidence", "Choose finalists", "Save selection", "Close overview");
     app.inputs.push("energetic verbs");
     await app.command("overview");
     assert.equal(app.state().brief.direction, "energetic verbs");

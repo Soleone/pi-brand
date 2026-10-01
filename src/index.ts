@@ -18,7 +18,12 @@ const SIGNALS_SCHEMA = {
   famousCollision: Type.Optional(Type.Boolean()), sameSpaceCollision: Type.Optional(Type.Boolean()),
   giantAssociation: Type.Optional(Type.Boolean()), unrelatedCount: Type.Optional(Type.Integer({ minimum: 0 })), comParked: Type.Optional(Type.Boolean()),
 };
-const CHECK_OPTIONS = Type.Object({ stage: Type.Optional(Type.Union([Type.Literal("screen"), Type.Literal("deep")])), refresh: Type.Optional(Type.Boolean()) });
+const CHECK_OPTIONS = Type.Object({
+  stage: Type.Optional(Type.Union([Type.Literal("screen"), Type.Literal("deep")])),
+  refresh: Type.Optional(Type.Boolean()),
+  names: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 60 }), { minItems: 1, maxItems: 3 })),
+  allFavorites: Type.Optional(Type.Boolean()),
+});
 
 function textResult<T>(text: string, details: T, usage?: Usage, terminate = true) {
   return { content: [{ type: "text" as const, text }], details, ...(usage ? { usage } : {}), ...(terminate ? { terminate: true } : {}) };
@@ -52,7 +57,7 @@ function showRecord(ctx: ExtensionContext, name: string, record?: AvailabilityRe
     `Checked ${record.checkedAt} (${record.stage ?? "legacy"}). Not trademark clearance.`,
     ...(record.warnings ?? []),
     ...(record.evidence ?? []).map((source) => `${source.source}: ${source.detail}\n${source.url}`),
-    "Refresh only when needed: /brand check refresh",
+    "Refresh saved favorites from the favorites menu, or refresh selected finalists with /brand check refresh.",
   ].join("\n"), "info");
 }
 
@@ -98,26 +103,55 @@ function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckD
   };
 }
 
-async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", refresh = false) {
+async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", refresh = false, names?: string[], allFavorites = false) {
   const run = load(ctx);
-  ctx.ui.setStatus?.("brand", `Checking ${run.state.finalists.length} finalists (${stage}, 45s maximum)...`);
-  const result = await checkFinalists(run.state, stage, checkDependencies(ctx, run.state), { refresh, signal: ctx.signal })
-    .finally(() => ctx.ui.setStatus?.("brand", undefined));
-  await mutate(ctx, (state) => {
-    for (const [name, record] of Object.entries(result.records)) {
-      if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
-      // Another writer may have completed this name while this operation was awaiting I/O.
-      const hit = getAvailability(state, name);
-      if (hit && !refresh && hit.stage !== "screen") continue;
-      recordAvailability(state, name, record);
-    }
+  let targets: string[];
+  if (allFavorites) {
+    if (names !== undefined) throw new Error("Choose either specific names or all favorites, not both.");
+    targets = [...new Map(run.state.liked.map((entry) => [availabilityKey(entry.name), entry.name])).values()];
+  } else if (names !== undefined) {
+    const favorites = new Map(run.state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));
+    targets = [...new Set(names.map((name) => favorites.get(availabilityKey(name))).filter((name): name is string => !!name))];
+    if (targets.length !== new Set(names.map(availabilityKey)).size) throw new Error("Checks can only target saved favorites.");
+  } else targets = run.state.finalists;
+  if (targets.length === 0) throw new Error(allFavorites ? "There are no saved favorites to check." : "Choose one to three finalists first.");
+  if (!allFavorites && targets.length > 3) throw new Error("Choose no more than three favorites per check.");
+
+  const records: Record<string, AvailabilityRecord> = Object.create(null);
+  const cached: string[] = [];
+  let usage: Usage | undefined;
+  const batchCount = Math.ceil(targets.length / 3);
+  for (let offset = 0; offset < targets.length; offset += 3) {
+    const batch = targets.slice(offset, offset + 3);
+    const checkState = { ...run.state, finalists: batch };
+    ctx.ui.setStatus?.("brand", allFavorites
+      ? `Checking favorites ${offset + 1}-${offset + batch.length} of ${targets.length} (${stage}, batch ${Math.floor(offset / 3) + 1}/${batchCount})...`
+      : `Checking ${batch.length} ${names === undefined ? "finalist" : "favorite"}${batch.length === 1 ? "" : "s"} (${stage}, 45s maximum)...`);
+    const result = await checkFinalists(checkState, stage, checkDependencies(ctx, checkState), { refresh, signal: ctx.signal })
+      .finally(() => ctx.ui.setStatus?.("brand", undefined));
+    await mutate(ctx, (state) => {
+      for (const [name, record] of Object.entries(result.records)) {
+        if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
+        // Another writer may have completed this name while this operation was awaiting I/O.
+        const hit = getAvailability(state, name);
+        if (hit && !refresh && hit.stage !== "screen") continue;
+        recordAvailability(state, name, record);
+      }
+    });
+    Object.assign(records, result.records);
+    cached.push(...result.cached);
+    usage = addUsage(usage, result.usage);
+  }
+  const summaries = targets.map((name) => {
+    const record = records[availabilityKey(name)];
+    const isCached = cached.some((entry) => availabilityKey(entry) === availabilityKey(name));
+    return `${name}: ${record.score} (${record.reason})${isCached ? " [cached]" : ""}`;
   });
-  const summary = run.state.finalists.map((name) => {
-    const record = result.records[availabilityKey(name)];
-    return `${name}: ${record.score} (${record.reason})${result.cached.includes(name) ? " [cached]" : ""}`;
-  }).join("\n");
+  const summary = allFavorites
+    ? `${targets.length} favorites checked (${stage}, cache first; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen Browse favorites to see every status.` : ""}`
+    : summaries.join("\n");
   ctx.ui.notify(`${summary}\nSources: /brand evidence <name>. These findings are not legal clearance.`, "info");
-  return textResult(summary, { records: result.records, cached: result.cached }, result.usage);
+  return textResult(summary, { records, cached }, usage);
 }
 
 export default function registerPiBrand(pi: ExtensionAPI): void {
@@ -263,7 +297,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     ctx.ui.notify(`Brand models saved. ${creativeChanged ? "Creative model changed; reserved names cleared." : "Worker model changed; reserved names kept."} Main model unchanged; cached checks retained.`, "info");
   }
 
-  async function openOverview(ctx: ExtensionContext): Promise<"more" | "deep" | "screen" | "refresh-deep" | "refresh-screen" | undefined> {
+  type CheckRequest = { stage: "deep" | "screen"; refresh: boolean; names?: string[]; allFavorites?: boolean };
+  async function openOverview(ctx: ExtensionContext): Promise<"more" | CheckRequest | undefined> {
     while (true) {
       const run = load(ctx);
       if (!ctx.hasUI) { ctx.ui.notify(brandOverview(run.state), "info"); return; }
@@ -274,10 +309,10 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       if (choice === "Check finalists") {
         if (run.state.finalists.length === 0 && !await chooseFinalists(ctx)) continue;
         const check = await selectBrandOption(ctx, "Check up to 3 finalists · no legal clearance", ["Deep check (cache first)", "Quick screen (cache first)", "Refresh deep check", "Refresh quick screen", "Back"]);
-        if (check === "Deep check (cache first)") return "deep";
-        if (check === "Quick screen (cache first)") return "screen";
-        if (check === "Refresh deep check") return "refresh-deep";
-        if (check === "Refresh quick screen") return "refresh-screen";
+        if (check === "Deep check (cache first)") return { stage: "deep", refresh: false };
+        if (check === "Quick screen (cache first)") return { stage: "screen", refresh: false };
+        if (check === "Refresh deep check") return { stage: "deep", refresh: true };
+        if (check === "Refresh quick screen") return { stage: "screen", refresh: true };
         continue;
       }
       if (choice === "Model settings") { await openModelSettings(ctx); continue; }
@@ -314,18 +349,41 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         }
         continue;
       }
-      if (choice === "Browse favorites" || choice === "Read evidence") {
-        const names = choice === "Browse favorites" ? [...run.state.liked].reverse().map((entry) => entry.name)
-          : [...new Set([...run.state.finalists, ...Object.keys(run.state.availability)])];
-        if (names.length === 0) { ctx.ui.notify("Nothing saved here yet.", "info"); continue; }
-        const name = await selectBrandOption(ctx, choice, ["Back", ...names]);
-        if (!name || name === "Back") continue;
-        if (choice === "Read evidence") { showRecord(ctx, name, getAvailability(run.state, name)); continue; }
-        const favorite = run.state.liked.find((entry) => entry.name === name)!;
-        const action = await selectBrandOption(ctx, `${name}\n${favorite.flavor ?? ""}\n${favorite.style ?? ""}`, ["Read evidence", "Choose finalists", "Dismiss favorite", "Back"]);
-        if (action === "Read evidence") showRecord(ctx, name, getAvailability(run.state, name));
+      if (choice === "Browse favorites") {
+        const favorites = [...run.state.liked].reverse();
+        if (favorites.length === 0) { ctx.ui.notify("Nothing saved here yet.", "info"); continue; }
+        const rows = favorites.map((favorite) => {
+          const record = getAvailability(run.state, favorite.name);
+          const status = record ? `${record.score} · ${record.stage ?? "legacy"} · ${record.checkedAt.slice(0, 10)}` : "not checked";
+          return { name: favorite.name, label: `${favorite.name} · ${status}` };
+        });
+        const checkAll = `Check all favorites (deep, cache first · ${favorites.length})`;
+        const selected = await selectBrandOption(ctx, "Favorites · status per item · not legal clearance", ["Back", checkAll, ...rows.map((row) => row.label)]);
+        if (!selected || selected === "Back") continue;
+        if (selected === checkAll) return { stage: "deep", refresh: false, allFavorites: true };
+        const row = rows.find((entry) => entry.label === selected);
+        if (!row) continue;
+        const { name } = row;
+        const favorite = favorites.find((entry) => entry.name === name)!;
+        const record = getAvailability(run.state, name);
+        const action = await selectBrandOption(ctx, `${name}\n${favorite.flavor ?? ""}\n${favorite.style ?? ""}\nChecks are not legal clearance.`, [
+          "Read evidence", "Check status (deep)", "Quick screen", "Refresh status (deep)", "Refresh status (quick)",
+          "Choose finalists", "Dismiss favorite", "Back",
+        ]);
+        if (action === "Read evidence") showRecord(ctx, name, record);
+        if (action === "Check status (deep)") return { stage: "deep", refresh: false, names: [name] };
+        if (action === "Quick screen") return { stage: "screen", refresh: false, names: [name] };
+        if (action === "Refresh status (deep)") return { stage: "deep", refresh: true, names: [name] };
+        if (action === "Refresh status (quick)") return { stage: "screen", refresh: true, names: [name] };
         if (action === "Choose finalists") await chooseFinalists(ctx, [...new Set([...run.state.finalists, name])].slice(-3));
         if (action === "Dismiss favorite" && await ctx.ui.confirm(`Dismiss ${name}?`, "Removes it from favorites and finalists. History and cached evidence are retained.")) await mutate(ctx, (state) => dismissNames(state, [name]));
+        continue;
+      }
+      if (choice === "Read evidence") {
+        const names = [...new Set([...run.state.finalists, ...Object.keys(run.state.availability)])];
+        if (names.length === 0) { ctx.ui.notify("Nothing saved here yet.", "info"); continue; }
+        const name = await selectBrandOption(ctx, choice, ["Back", ...names]);
+        if (name && name !== "Back") showRecord(ctx, name, getAvailability(run.state, name));
       }
     }
   }
@@ -341,13 +399,11 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         const action = await openOverview(ctx);
         if (!action) return { ...result, ...(usage ? { usage } : {}) };
         if (action !== "more") {
-          const stage = action.includes("screen") ? "screen" : "deep";
-          const refresh = action.startsWith("refresh-");
           if (!screenedCtx) {
-            pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state, stage, refresh), { deliverAs: "followUp" });
+            pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state, action.stage, action.refresh, action.names, action.allFavorites), { deliverAs: "followUp" });
             return { ...result, ...(usage ? { usage } : {}) };
           }
-          const checked = await runCheck(screenedCtx, stage, refresh);
+          const checked = await runCheck(screenedCtx, action.stage, action.refresh, action.names, action.allFavorites);
           usage = addUsage(usage, checked.usage);
           continue;
         }
@@ -382,10 +438,10 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     },
   });
   pi.registerTool({
-    name: "brand_check", label: "Check finalists", executionMode: "sequential",
-    description: "Own one bounded availability operation for the saved 1-3 finalists. Cache, parallel search, evidence, optional registry checks and persistence are handled here. Refresh only on explicit user request.",
+    name: "brand_check", label: "Check names", executionMode: "sequential",
+    description: "Check saved finalists, up to three explicitly named favorites, or all saved favorites in batches of three. Cache, parallel search, evidence, optional registry checks and persistence are handled here. Refresh only on explicit user request.",
     parameters: CHECK_OPTIONS,
-    async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh); },
+    async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh, params.names, params.allFavorites); },
   });
   pi.registerTool({
     name: "brand_pick", label: "Pick names", executionMode: "sequential",
