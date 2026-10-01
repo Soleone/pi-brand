@@ -71,7 +71,7 @@ test("availability scores survive a save/reload round trip", () => {
   assert.equal(second.state.liked[0].scoreReason, "no notable collision");
 });
 
-test("recordAvailability caches forever and backfills likes and candidates", () => {
+test("recordAvailability caches and backfills likes and candidates", () => {
   const { home, cwd } = tempRoot();
   const first = loadBrandState(cwd, true, {}, home);
   const round = recordRound(first.state, {
@@ -214,11 +214,12 @@ test("finalists, direction, reserves, batch cache and evidence survive reload", 
   assert.deepEqual(run.state.reserve, []);
   setDirection(run.state, "short and confident");
   assert.deepEqual(run.state.directionNotes, ["short and confident"]);
-  recordAvailability(run.state, "Ready", { score: "unknown", reason: "partial", stage: "screen", signals: { famousCollision: false }, evidence: [{ source: "web", url: "https://example.com", detail: "citation" }], warnings: ["Missing domain check"], requirementsKey: "requirements" });
+  recordAvailability(run.state, "Ready", { score: "unknown", reason: "partial", stage: "screen", researchVersion: 2, signals: { famousCollision: false }, evidence: [{ source: "web", url: "https://example.com", detail: "citation" }], warnings: ["Missing domain check"], requirementsKey: "requirements" });
   saveBrandState(run.path, run.state);
   const reloaded = loadBrandState(cwd, true, {}, home).state;
   assert.deepEqual(reloaded.finalists, ["Ready", "Focus"]);
   assert.equal(reloaded.availability.ready.evidence?.[0].detail, "citation");
+  assert.equal(reloaded.availability.ready.researchVersion, 2);
   assert.equal(reloaded.availability.ready.signals?.sameSpaceCollision, undefined);
   const batch = getAvailabilityBatch(reloaded, ["Ready", "READY", "Focus"]);
   assert.deepEqual(Object.keys(batch.cached), ["ready"]);

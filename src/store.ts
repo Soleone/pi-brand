@@ -159,9 +159,8 @@ export function getAvailability(state: BrandState, name: string): AvailabilityRe
 }
 
 /**
- * Record an availability result forever and backfill it onto every matching
- * liked entry and round candidate, so the score shows up everywhere the name
- * appears without any re-check.
+ * Record an availability result and backfill it onto every matching liked
+ * entry and round candidate, so the score shows up everywhere the name appears.
  */
 export function recordAvailability(
   state: BrandState,
@@ -316,6 +315,7 @@ function normalizeState(raw: unknown): BrandState | undefined {
         signals: normalizeSignals(entry.signals),
         checkedAt: typeof entry.checkedAt === "string" ? entry.checkedAt : new Date().toISOString(),
         stage: entry.stage === "screen" || entry.stage === "deep" ? entry.stage : "legacy",
+        researchVersion: Number.isInteger(entry.researchVersion) ? entry.researchVersion as number : undefined,
         evidence: normalizeEvidence(entry.evidence),
         warnings: Array.isArray(entry.warnings) ? entry.warnings.filter((warning): warning is string => typeof warning === "string").slice(0, 20) : undefined,
         requirementsKey: typeof entry.requirementsKey === "string" ? entry.requirementsKey : undefined,

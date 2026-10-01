@@ -1,6 +1,6 @@
 import { Type, type Usage } from "@earendil-works/pi-ai";
 import { BorderedLoader, withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import { ASSESSMENT_SCHEMA, checkFinalists, extractWebEvidence, type CheckDependencies } from "./checker.ts";
+import { ASSESSMENT_SCHEMA, buildCollisionSearchQueries, checkFinalists, extractWebEvidence, shouldRefreshUnknown, type CheckDependencies } from "./checker.ts";
 import { takeBatch } from "./engine.ts";
 import { addUsage } from "./generation.ts";
 import { generationRequest, requestStructured } from "./model.ts";
@@ -83,17 +83,28 @@ async function chooseFinalists(ctx: ExtensionContext, initial?: string[]): Promi
 }
 
 function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckDependencies {
-  const generic = new Set(["the", "and", "with", "for", "app", "simple", "elegant", "delight", "first", "fast", "rich"]);
-  const category = (state.product.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((word) => !generic.has(word)).slice(0, 2).join(" ") || "app";
   return {
     search: async (name, signal) => {
       if (!ctx.tools.some((tool) => tool.name === "web_search")) throw new Error("Enable the web_search extension, then run /brand check refresh.");
-      const outcome = await ctx.executeTool("web_search", {
-        queries: [`\"${name}\" ${category} app company`, `\"${name}\" software brand company`],
-        numResults: 3, includeContent: false, workflow: "none",
-      }, { signal });
-      if (outcome.isError) throw new Error("Web search failed or was blocked.");
-      return extractWebEvidence(outcome.result.content);
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        signal.throwIfAborted();
+        try {
+          const outcome = await ctx.executeTool("web_search", {
+            queries: buildCollisionSearchQueries(name, state.product),
+            numResults: 3, includeContent: false, workflow: "none",
+          }, { signal });
+          if (outcome.isError) throw new Error("Web search failed or was blocked.");
+          const evidence = extractWebEvidence(outcome.result.content);
+          if (evidence.length > 0) return evidence;
+          lastError = new Error("Web search returned no source-linked results.");
+        } catch (error) {
+          if (signal.aborted) throw signal.reason;
+          lastError = error;
+        }
+        if (attempt === 0) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      }
+      throw lastError instanceof Error ? lastError : new Error("Web search failed or was blocked.");
     },
     assess: async (prompt, signal) => {
       const response = await requestStructured<{ results: Awaited<ReturnType<CheckDependencies["assess"]>>["results"] }>(ctx, state.workerModel ?? state.model, prompt, ASSESSMENT_SCHEMA, signal, "worker");
@@ -134,7 +145,7 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
         if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
         // Another writer may have completed this name while this operation was awaiting I/O.
         const hit = getAvailability(state, name);
-        if (hit && !refresh && hit.stage !== "screen") continue;
+        if (hit && !refresh && hit.stage !== "screen" && !shouldRefreshUnknown(hit, stage)) continue;
         recordAvailability(state, name, record);
       }
     });
@@ -145,7 +156,10 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
   const summaries = targets.map((name) => {
     const record = records[availabilityKey(name)];
     const isCached = cached.some((entry) => availabilityKey(entry) === availabilityKey(name));
-    return `${name}: ${record.score} (${record.reason})${isCached ? " [cached]" : ""}`;
+    const diagnostics = record.score === "unknown" && record.warnings?.length
+      ? `; ${record.warnings.slice(0, 2).map((warning) => warning.replace(/\s+/g, " ").slice(0, 180)).join("; ")}`
+      : "";
+    return `${name}: ${record.score} (${record.reason}${diagnostics})${isCached ? " [cached]" : ""}`;
   });
   const summary = allFavorites
     ? `${targets.length} favorites checked (${stage}, cache first; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen Browse favorites to see every status.` : ""}`
@@ -439,7 +453,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
   });
   pi.registerTool({
     name: "brand_check", label: "Check names", executionMode: "sequential",
-    description: "Check saved finalists, up to three explicitly named favorites, or all saved favorites in batches of three. Cache, parallel search, evidence, optional registry checks and persistence are handled here. Refresh only on explicit user request.",
+    description: "Check saved finalists, up to three explicitly named favorites, or all saved favorites in batches of three. Known records are cache-first; unknown deep results from older research rules are retried once automatically. Explicit refresh is for user-requested rechecks.",
     parameters: CHECK_OPTIONS,
     async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh, params.names, params.allFavorites); },
   });

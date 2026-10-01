@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import register from "../src/index.ts";
-import { loadBrandState } from "../src/store.ts";
+import { CHECK_RESEARCH_VERSION } from "../src/checker.ts";
+import { loadBrandState, saveBrandState } from "../src/store.ts";
 
 const candidates = ["Able", "Bold", "Calm", "Daring", "Eager", "Fresh", "Grand", "Happy", "Ideal", "Jolly", "Keen", "Lively", "Merry", "Noble", "Open", "Proud", "Quick", "Ready", "Sharp", "Tidy", "Upbeat", "Vivid", "Warm", "Zesty"];
 const usage = { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 } };
@@ -181,6 +182,35 @@ test("brand_check can update one saved favorite without changing finalists", asy
     assert.equal(app.state().availability.able.stage, "screen");
     assert.equal(app.state().availability.bold, undefined);
     assert.match(result.content[0].text, /Able:/);
+  } finally { app.cleanup(); }
+});
+
+test("deep check upgrades an old unknown automatically and retries an empty search response", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save selection");
+    await app.command("app for learning or retaining information");
+    const saved = loadBrandState(app.ctx.cwd, true);
+    saved.state.availability.able = { score: "unknown", reason: "incomplete collision evidence", checkedAt: "2025-01-01", stage: "deep" };
+    saveBrandState(saved.path, saved.state);
+
+    let searches = 0;
+    const toolCtx = {
+      ...app.ctx,
+      tools: [{ name: "web_search" }],
+      executeTool: async (_name: string, args: { queries: string[]; numResults: number }) => {
+        searches++;
+        assert.equal(args.queries.length, 2);
+        assert.equal(args.numResults, 3);
+        if (searches === 1) return { isError: false, result: { content: [{ type: "text", text: "Search provider rate limited this request." }] } };
+        return { isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: "https://ablelearning.example/", title: "Able learning app", snippet: "A memory and flashcard app for learning new material." }] }) }] } };
+      },
+    } as unknown as ExtensionToolContext;
+    await app.tools.get("brand_check")!.execute("check", { stage: "deep", names: ["Able"] } as never, undefined, undefined, toolCtx);
+    assert.equal(searches, 2);
+    assert.equal(app.state().availability.able.score, "terrible");
+    assert.equal(app.state().availability.able.researchVersion, CHECK_RESEARCH_VERSION);
+    assert.equal(app.state().liked[0].score, "terrible");
   } finally { app.cleanup(); }
 });
 

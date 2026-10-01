@@ -34,6 +34,8 @@ export interface AvailabilityRecord {
   signals?: Partial<CollisionSignals>;
   checkedAt: string;
   stage?: "legacy" | "screen" | "deep";
+  /** Checker research rules that produced this record. */
+  researchVersion?: number;
   evidence?: AvailabilityEvidence[];
   warnings?: string[];
   /** A fingerprint of requirements, not a claim of timeless availability. */

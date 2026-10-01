@@ -5,6 +5,73 @@ import type { AvailabilityEvidence, AvailabilityRecord, BrandState } from "./typ
 
 const FLAG = Type.Union([Type.Boolean(), Type.Null()]);
 const MAX_ASSESSMENT_URL_LENGTH = 320;
+export const CHECK_RESEARCH_VERSION = 2;
+
+const LEARNING_PRODUCT = /\b(?:learn\w*|educat\w*|stud\w*|flashcard\w*|memor\w*|retain\w*|retention|knowledge|vocab\w*|vokabel\w*|quiz\w*|school|course|bildung|wissen\w*)\b/i;
+const LEARNING_SEARCH_TERMS = "learning education study flashcards vocabulary memory retention quiz knowledge facts trivia game puzzle";
+const LEARNING_ACTIVITY = /\b(?:learn\w*|educat\w*|stud\w*|flashcard\w*|vocab\w*|vokabel\w*|mnemonic\w*|merkbild\w*|spaced repetition|memor\w*|memory|retent\w*|quiz\w*|lesson\w*|course\w*|teach\w*|school\w*|lern\w*|wissen\w*)\b/i;
+const FACTUAL_GAME = /\b(?:fact\w*|trivia|knowledge|wissen\w*)\b/i;
+const GAME_ACTIVITY = /\b(?:game\w*|puzzle\w*|sort\w*|quiz\w*|challenge\w*|daily|täglich)\b/i;
+
+export function buildCollisionSearchQueries(name: string, product: string): string[] {
+  const clean = (value: string, limit: number) => value.replace(/[\r\n"]/g, " ").replace(/\s+/g, " ").trim().slice(0, limit);
+  const brand = clean(name, 60);
+  const productPhrase = clean(product, 120) || "app";
+  const spaceTerms = LEARNING_PRODUCT.test(product) ? LEARNING_SEARCH_TERMS : productPhrase;
+  return [
+    `"${brand}" ${productPhrase} app`,
+    `"${brand}" ${spaceTerms} app software company`,
+  ];
+}
+
+export function shouldRefreshUnknown(record: AvailabilityRecord | undefined, stage: "screen" | "deep"): boolean {
+  return stage === "deep" && !!record && record.stage !== "legacy" && record.score === "unknown" && record.researchVersion !== CHECK_RESEARCH_VERSION;
+}
+
+function normalizedEvidenceText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function hasLearningProductEvidence(name: string, product: string, evidence: AvailabilityEvidence[]): boolean {
+  if (!LEARNING_PRODUCT.test(product)) return false;
+  const key = normalizedEvidenceText(name);
+  if (key.length < 3) return false;
+  return evidence.some((entry) => {
+    if (entry.source !== "web") return false;
+    let hostname: string;
+    try { hostname = new URL(entry.url).hostname; } catch { return false; }
+    const hostHasName = hostname.split(".").some((label) => {
+      const normalized = normalizedEvidenceText(label);
+      return normalized === key || (normalized.startsWith(key) && /^(?:app|game|learn|study|quiz|coach|education)/.test(normalized.slice(key.length)));
+    });
+    const marketplace = /(?:^|\.)apps\.apple\.com$|(?:^|\.)play\.google\.com$/i.test(hostname);
+    if (!hostHasName && !(marketplace && normalizedEvidenceText(entry.detail).includes(key))) return false;
+    const detail = entry.detail.toLocaleLowerCase();
+    return LEARNING_ACTIVITY.test(detail) || (FACTUAL_GAME.test(detail) && GAME_ACTIVITY.test(detail));
+  });
+}
+
+function evidenceRelevance(detail: string, product: string): number {
+  let score = 0;
+  if (LEARNING_PRODUCT.test(product)) {
+    if (LEARNING_ACTIVITY.test(detail)) score += 3;
+    if (FACTUAL_GAME.test(detail) && GAME_ACTIVITY.test(detail)) score += 3;
+  }
+  const terms = product.toLocaleLowerCase().match(/[\p{L}]{4,}/gu) ?? [];
+  const ignored = new Set(["learning", "retaining", "information", "education", "educational", "software", "product", "application"]);
+  for (const term of terms) if (!ignored.has(term) && detail.toLocaleLowerCase().includes(term)) score++;
+  return score;
+}
+
+function selectAssessmentEvidence(evidence: AvailabilityEvidence[], product: string): AvailabilityEvidence[] {
+  return evidence
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH)
+    .sort((a, b) => evidenceRelevance(b.entry.detail, product) - evidenceRelevance(a.entry.detail, product) || a.index - b.index)
+    .slice(0, 4)
+    .sort((a, b) => a.index - b.index)
+    .map(({ entry }) => entry);
+}
 export const ASSESSMENT_SCHEMA = Type.Object({ results: Type.Array(Type.Object({
   name: Type.String(), reason: Type.String({ maxLength: 400 }),
   famousCollision: FLAG, sameSpaceCollision: FLAG, giantAssociation: FLAG,
@@ -74,14 +141,13 @@ async function inspectUrl(url: string, source: AvailabilityEvidence["source"], s
 }
 
 function assessPrompt(state: BrandState, items: { name: string; evidence: AvailabilityEvidence[] }[]): string {
-  // Pass only bounded web excerpts. Keep original evidence intact for display and later checks.
-  const excerpts = items.map((item) => ({ name: item.name, evidence: item.evidence
-    .filter((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH)
-    .slice(0, 3)
+  // Rank all bounded excerpts so an on-category source later in search results is not discarded.
+  const excerpts = items.map((item) => ({ name: item.name, evidence: selectAssessmentEvidence(item.evidence, state.product)
     .map((entry) => ({ url: entry.url, detail: entry.detail.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").slice(0, 400) })) }));
   return [
     "Assess naming collisions from supplied web excerpts only. Null means not established. Do not invent businesses, domains, sources, or legal conclusions.",
     "A package or repository alone is not a same-category collision. Distinguish unrelated famous brands from same-category uses. Count unrelated uses only if identified in evidence.",
+    "When the named use clearly serves the product's broad user need, count it as same-space even if its format differs. For learning/retention products, vocabulary, mnemonic, spaced-repetition, quiz, fact-learning, and book-learning products are relevant. Require the excerpt to support the named use and activity; do not infer from the name alone.",
     "comParked requires evidence of parking/for-sale, not registration. Give a short factual reason and cite only URLs below. This is not trademark clearance.",
     `Product: ${state.product.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300)}`,
     JSON.stringify(excerpts),
@@ -113,7 +179,8 @@ export async function checkFinalists(
     const key = requirementsKey(state);
     await Promise.all(state.finalists.map(async (name) => {
       if (controller.signal.aborted) throw controller.signal.reason;
-      const previous = options.refresh ? undefined : getAvailability(state, name);
+      const cachedRecord = options.refresh ? undefined : getAvailability(state, name);
+      const previous = shouldRefreshUnknown(cachedRecord, stage) ? undefined : cachedRecord;
       if (previous && (previous.stage !== "screen" || stage === "screen" || previous.score === "terrible")) {
         records[availabilityKey(name)] = previous.requirementsKey && previous.requirementsKey !== key
           ? { ...previous, warnings: [...(previous.warnings ?? []), "Requirements changed since this check. Use /brand check refresh to update it."] }
@@ -151,15 +218,18 @@ export async function checkFinalists(
     await Promise.all(pending.map(async (item) => {
       const assessment = assessments.find((entry) => availabilityKey(entry.name) === availabilityKey(item.name));
       const signals: Partial<CollisionSignals> = { ...item.previous?.signals };
-      const suppliedUrls = new Set(item.evidence.filter((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH).slice(0, 3).map((entry) => entry.url));
+      const suppliedUrls = new Set(selectAssessmentEvidence(item.evidence, state.product).map((entry) => entry.url));
       // Uncited model judgments never become persisted collision facts.
       const supported = assessment?.sourceUrls.some((url) => suppliedUrls.has(url)) && assessment.sourceUrls.every((url) => suppliedUrls.has(url));
+      const learningCollision = hasLearningProductEvidence(item.name, state.product, item.evidence);
       if (assessment && supported) {
         for (const property of ["famousCollision", "sameSpaceCollision", "giantAssociation", "comParked"] as const) {
           if (typeof assessment[property] === "boolean") signals[property] = assessment[property];
         }
         if (typeof assessment.unrelatedCount === "number") signals.unrelatedCount = assessment.unrelatedCount;
-      } else if (!item.previous) item.warnings.push("No supported assessment; missing signals remain unknown.");
+      }
+      if (learningCollision) signals.sameSpaceCollision = true;
+      else if (!supported && !item.previous) item.warnings.push("No supported assessment; missing signals remain unknown.");
       let verdict = scoreFromSignals(signals);
       // A decisive collision earns early exit. Do not spend domain/package requests on it.
       if (stage === "deep" && verdict.score !== "terrible") {
@@ -179,8 +249,10 @@ export async function checkFinalists(
       if (item.warnings.length > 0 && verdict.score === "perfect") verdict = { score: "unknown", reason: "incomplete check coverage" };
       records[availabilityKey(item.name)] = {
         score: verdict.score,
-        reason: assessment && supported ? `${assessment.reason} (${verdict.reason})` : item.previous?.reason ?? verdict.reason,
-        signals, checkedAt: new Date().toISOString(), stage,
+        reason: learningCollision
+          ? `Web evidence describes a learning or knowledge product using this name (${verdict.reason})`
+          : assessment && supported ? `${assessment.reason} (${verdict.reason})` : item.previous?.reason ?? verdict.reason,
+        signals, checkedAt: new Date().toISOString(), stage, researchVersion: CHECK_RESEARCH_VERSION,
         evidence: item.evidence.slice(0, 20), warnings: item.warnings,
         requirementsKey: key,
       };

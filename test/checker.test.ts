@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkFinalists, extractWebEvidence, type CheckDependencies } from "../src/checker.ts";
+import { buildCollisionSearchQueries, CHECK_RESEARCH_VERSION, checkFinalists, extractWebEvidence, shouldRefreshUnknown, type CheckDependencies } from "../src/checker.ts";
 import { emptyBrandState } from "../src/types.ts";
 
 function fixture() {
@@ -18,6 +18,15 @@ function fixture() {
   };
   return { state, calls, dependencies };
 }
+
+test("learning collision searches use several category-specific query angles", () => {
+  const queries = buildCollisionSearchQueries("Mindpop", "an app for learning or retaining information");
+  assert.equal(queries.length, 2);
+  assert.match(queries[0], /Mindpop.*learning or retaining information/);
+  assert.match(queries[1], /learning education study flashcards vocabulary memory retention quiz knowledge/);
+  assert.match(queries[1], /Mindpop.*facts trivia game puzzle app software company/);
+  assert.doesNotMatch(buildCollisionSearchQueries("Ledger", "an accounting app")[1], /flashcards|vocabulary/);
+});
 
 test("one operation batches assessment, caches findings and never mutates caller state", async () => {
   const { state, calls, dependencies } = fixture();
@@ -46,6 +55,21 @@ test("legacy scores remain authoritative until explicit refresh", async () => {
   assert.deepEqual(calls, { search: 1, assess: 1, fetch: 2 });
 });
 
+test("old deep unknowns are automatically rechecked once under new research rules", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.finalists = ["Able"];
+  state.availability.able = { score: "unknown", reason: "old incomplete result", checkedAt: "2025-01-01", stage: "deep", researchVersion: 1 };
+  assert.equal(shouldRefreshUnknown(state.availability.able, "deep"), true);
+  const refreshed = await checkFinalists(state, "deep", dependencies);
+  assert.equal(calls.search, 1);
+  assert.equal(refreshed.records.able.researchVersion, CHECK_RESEARCH_VERSION);
+  state.availability = refreshed.records;
+  const cached = await checkFinalists(state, "deep", dependencies);
+  assert.deepEqual(cached.cached, ["Able"]);
+  assert.equal(calls.search, 1);
+  assert.equal(shouldRefreshUnknown(state.availability.able, "deep"), false);
+});
+
 test("screen upgrade reuses web evidence and avoids repeated search or classification", async () => {
   const { state, calls, dependencies } = fixture();
   state.finalists = ["Able"];
@@ -69,6 +93,39 @@ test("decisive collisions skip domain and package lookups", async () => {
   state.brief.checkPackages = true;
   const result = await checkFinalists(state, "deep", dependencies);
   assert.equal(result.records.able.score, "terrible");
+  assert.equal(calls.fetch, 0);
+});
+
+test("clear learning and knowledge products override unsupported worker judgments", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.product = "an app for learning or retaining information";
+  state.finalists = ["Nugget", "Mindpop", "FactStack"];
+  const relevant: Record<string, { url: string; detail: string }> = {
+    nugget: { url: "https://nugget.coach/", detail: "Nugget teaches ideas from books with games and spaced repetition so learners remember them." },
+    mindpop: { url: "https://mindpopapp.com/", detail: "Mindpop ist ein Lernsystem für Vokabeln mit Merkbildern, Quizfragen und Mini-Spielen." },
+    factstack: { url: "https://factstackgame.com/", detail: "FactStack is a daily fact sorting game. Sort facts by date, size, and popularity." },
+  };
+  dependencies.search = async (name) => {
+    const specific = relevant[name.toLowerCase()];
+    return [
+      ...Array.from({ length: 4 }, (_, index) => ({ source: "web" as const, url: `https://unrelated.example/${name}/${index}`, detail: `${name} family restaurant and dining guide` })),
+      { source: "web", ...specific },
+    ];
+  };
+  dependencies.assess = async (prompt) => {
+    const items = JSON.parse(prompt.split("\n").at(-1)!) as { name: string; evidence: { url: string }[] }[];
+    for (const item of items) assert.ok(item.evidence.some((source) => source.url === relevant[item.name.toLowerCase()].url));
+    return { results: items.map((item) => ({ name: item.name, reason: "no overlap", sourceUrls: item.evidence.map((source) => source.url), famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: false })) };
+  };
+  const result = await checkFinalists(state, "deep", dependencies);
+  assert.deepEqual(Object.keys(result.records), ["nugget", "mindpop", "factstack"]);
+  for (const name of state.finalists) {
+    const record = result.records[name.toLowerCase()];
+    assert.equal(record.score, "terrible", name);
+    assert.equal(record.signals?.sameSpaceCollision, true, name);
+    assert.match(record.reason, /Web evidence describes a learning or knowledge product/);
+    assert.equal(record.researchVersion, CHECK_RESEARCH_VERSION);
+  }
   assert.equal(calls.fetch, 0);
 });
 
@@ -146,7 +203,7 @@ test("worker sees bounded cited excerpts only, never creative taste or full sear
     const items = JSON.parse(prompt.split("\n").at(-1)!) as { name: string; evidence: { url: string; detail: string }[] }[];
     assert.equal(items.length, 3);
     for (const item of items) {
-      assert.equal(item.evidence.length, 3);
+      assert.equal(item.evidence.length, 4);
       assert.ok(item.evidence.every((source) => source.detail.length <= 400));
       assert.ok(item.evidence.every((source) => !source.url.endsWith("/5")));
     }
