@@ -1,3 +1,7 @@
 node_modules/
 .pi/brand.json
 .pi/brand*.tmp
+dist/
+demo/browser/.build/
+# The demo sandbox's pi config (a global ignore often hides .pi/).
+!demo/browser/home/.pi/

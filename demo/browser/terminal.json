@@ -1,0 +1,46 @@
+{
+  "project": "../..",
+  "mount": {
+    ".": {
+      "from": "./home"
+    },
+    ".pi-app": {
+      "from": "./.build/pi-app"
+    },
+    ".pi/agent/extensions/pi-brand": {
+      "from": "../..",
+      "include": [
+        "src",
+        "package.json"
+      ]
+    }
+  },
+  "env": {
+    "PATH": "~/bin:/usr/local/bin:/usr/bin:/bin",
+    "PI_OFFLINE": "1",
+    "PI_BRAND_CONFIG": "~/.demo/brand-run.json"
+  },
+  "setup": [
+    "chmod +x bin/pi bin/git bin/fd bin/rg",
+    "node .demo/setup.js",
+    "npm install --no-audit --no-fund"
+  ],
+  "start": "cd project && pi",
+  "onTheme": "node .demo/pi-theme.js",
+  "welcome": [
+    "\u001b[1mpi-brand\u001b[0m names your product inside pi: the model proposes names, you pick favorites, and it checks whether your finalists are taken.",
+    "This is real pi with the extension. The model, the web search and the domain lookups are scripted samples, so it needs no key.",
+    "pi opens by itself in an app that still needs a name. Press the first button above, then:",
+    "",
+    "  Space            pick a name as a favorite",
+    "  Enter            save them and open the overview",
+    "  Check finalists  in the overview: choose up to three, then Deep check",
+    "  /brand           the second button opens the overview again",
+    "",
+    "Change the theme at the top right and pi follows it."
+  ],
+  "hints": [
+    "/brand a reminder app that tells you when to water each plant",
+    "/brand"
+  ]
+}

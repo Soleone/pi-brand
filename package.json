@@ -34,11 +34,14 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "validate": "npm pack --dry-run"
+    "validate": "npm pack --dry-run",
+    "demo:build": "node demo/browser/build.mjs && showcase terminal demo/browser --out dist/browser",
+    "demo": "node demo/browser/build.mjs && showcase terminal demo/browser --out dist/browser --serve",
+    "media:capture": "node demo/capture.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.99.1",
     "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": ">=0.99.1",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
@@ -49,7 +52,9 @@
     "@earendil-works/pi-ai": "0.99.1",
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@earendil-works/pi-tui": "0.99.1",
+    "@soleone/showcase": "github:Soleone/showcase#658b1b5",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.25.10",
     "typescript": "^5.9.3"
   }
 }

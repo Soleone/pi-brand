@@ -1,0 +1,6 @@
+{
+  "name": "plant-reminders",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Tells you when to water each plant."
+}

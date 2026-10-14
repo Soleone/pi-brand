@@ -1,10 +1,20 @@
 # pi-brand
 
-Name products without growing the main conversation. Pi supplies the keyboard UI and credentials; a small headless engine owns generation, deduplication, reserves and availability checking.
+Name your product inside the [pi coding agent](https://pi.dev). The model proposes ranked names, you pick favorites in a keyboard picker, and pi-brand checks whether your finalists are taken: a web search, a domain lookup, and a short verdict with sources. None of it grows your main conversation.
 
-Requires Pi **0.99.1 or newer** for nested tools and provider-neutral model requests. After updating this extension, run `/reload`.
+**[Try it in your browser](https://pi-brand.soleone.xyz)**: real pi with the extension, on a scripted model with sample search results, so no key and nothing leaves the page.
 
-## Fast path
+![Names for a plant-watering app, four picked as favorites, three chosen as finalists and checked: Thirsty collides with a plant care app, Greenhour comes out clean](demo/media/demo.webp)
+
+## Install
+
+```sh
+pi install git:https://github.com/Soleone/pi-brand
+```
+
+Requires pi **0.99.1 or newer** for nested tools and provider-neutral model requests. After updating, run `/reload`. Checks use the `web_search` tool, so enable a web search extension before running one.
+
+## How it works
 
 1. `/brand <what the product does>` generates a ranked pool in an isolated model request, then opens the favorites picker.
 2. **Space** toggles, **↑↓** moves, typing filters. **Enter** saves favorites. **Esc** opens a reject/note prompt; Esc again cancels the batch.
@@ -24,29 +34,13 @@ You do not have to generate more names to finish shortlisting. With many favorit
 
 Default exploration makes **no network availability checks**. `/brand screen` explicitly requests a quick web screen of finalists. `/brand screened` opts into screening **three candidates before display**, three at a time rather than researching an entire speculative pool. Screened mode can add up to 45 seconds after generation.
 
-## Budgets and model routing
+## Budgets and models
 
-- Default creative model: `openai/gpt-6-luna`. **`/brand-settings`** (also `/brand settings`) selects a creative model for generation and an optional worker model for source-backed availability assessment. The worker defaults to **Same as creative**, preserving existing runs. `/brand model <provider/model-id>` and `/brand worker <provider/model-id|same>` provide command equivalents.
-- Settings are saved with **this project's naming run**, not global defaults. They never switch the main session model. Available choices use authenticated scoped models, or the available catalog when no scope is set. Unavailable models fail explicitly; there is no silent fallback.
-- Use a stronger creative model for name quality and a cheaper worker for bounded evidence interpretation, after checking its accuracy. UI navigation, filtering, deduplication, scoring, cache handling, storage and registry requests do not need a model. Naming does not add a second worker pass. Changing the worker retains the reserve; changing the creative model clears it. Cached findings are retained until explicit refresh.
-- Generation receives one compact brief, eight recent taste examples and a recent exclusion sample. The complete exclusion set stays local.
-- Each request processes at most 24 proposals. A batch allows at most two model requests, with one refill only when fewer than eight names survive.
-- Request timeout: 30 seconds. Entire generation timeout: 45 seconds. Output: at most 3,000 creative or 2,000 worker tokens per request (less if the selected model has a tighter output/context limit), low reasoning, no provider retries or browsing tools.
-- Up to 24 valid candidates enter the pool. Show 12 at a time and retain the rest, so **More** often needs no model call. A smaller remaining batch is shown rather than regenerating prematurely.
-- A changed direction, product, word/length constraint or model clears the reserve. Rejected batches stay excluded; cancelled batches return to the reserve.
-- No brand state is injected into unrelated agent turns. Generation commands and picker navigation run directly, not through queued main-agent prompts.
-- Each check batch contains at most three finalists or favorites and has a 45-second operation budget. **Check all favorites** runs cache-first deep checks in sequential batches of three. Searches within a batch run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
-- `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Assessment costs and failed/aborted requests are not included in these generation-only metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
+`/brand-settings` picks a **creative** model for names and an optional cheaper **worker** model for judging search evidence. Both are saved with this project's run and never switch your main session model. The default creative model is `openai/gpt-6-luna`.
 
-### Context isolation and prompt caching
+Every request is single-turn and isolated: it sees a compact brief, a few of your favorites as taste examples and a sample of excluded names, never the conversation. A batch is at most two requests and 24 names; you see 12 and the rest wait in a reserve, so **More** is often free. Checks run three names at a time within 45 seconds. `/brand stats` shows time, tokens and cost per batch.
 
-Creative generation and worker assessment are separate, **single-turn** requests. Neither reads Pi's conversation or reuses the other's messages, tool results, system prompt, or model selection. Even when both roles use the same provider/model, each has a different stable cache-routing identity scoped to this project run, role, and model. This identity is not a stored conversation or a call to warm the cache.
-
-Both prompts keep instructions first and changing data last. Creative input includes a compact product/direction, at most eight taste examples, and 24 recent exclusions; full duplicate filtering remains local. Worker input includes the product and at most three source-linked excerpts per finalist, each trimmed to 400 characters; the full evidence stays in app storage for inspection. Worker assessments cannot cite an undisclosed excerpt. Concurrent search completion cannot reorder the finalist batch. Hard character budgets and a conservative model-context estimate reject oversized requests instead of silently overflowing or switching models.
-
-Requests ask for short cache retention where supported. Cache hits depend on provider-specific thresholds and expiry; small prompts may not be cacheable. There is **no padding, replayed transcript, synthetic warmup, or guarantee of cache savings**. `/brand stats` shows provider-reported cache reads for generation, not a promise about future runs.
-
-No elapsed-time or quality guarantee is implied by these limits. They are work ceilings; compare real runs with `/brand stats`.
+Exact limits, timeouts and how prompt caching is (and isn't) used are in [docs/budgets-and-caching.md](docs/budgets-and-caching.md).
 
 ## One current brief
 
@@ -67,29 +61,15 @@ Package and repository checks are opt-in because a consumer app need not have an
 
 ## Evidence, not legal clearance
 
-The existing `perfect / good / decent / bad / terrible` scale is retained for compatibility, plus **unknown** for incomplete evidence. Labels describe the checks performed, not trademark clearance. Missing signals never default to a clean result. A strong unrelated brand association is separate from a same-category collision.
+Results use `perfect / good / decent / bad / terrible`, plus **unknown** when evidence is incomplete. They describe the checks performed, not trademark clearance. Missing signals never count as a clean result, and a strong unrelated brand is kept apart from a same-category collision.
 
-Checks retain factual reasons, source URLs, bounded excerpts, stage, warnings, requirements and timestamps. Deep checks add domain registry lookups and optional npm/GitHub queries. A registry 404 means **no record found**, not a guarantee a domain is registrable or affordable. Repository/package matches alone do not establish a brand collision. Domains used by active businesses still need contextual review.
+Each result keeps its reasons, source URLs, short excerpts and timestamps; `/brand evidence <name>` shows them. Deep checks add domain registry lookups and, if enabled, npm and GitHub. A registry 404 means **no record found**, not that a domain is registrable or affordable. Results are cached until you refresh them (`/brand check refresh`), and a quick screen upgrades to a deep check without searching again.
 
-Cached legacy results are preserved as-is, including their original scores and dates. They have no retained research sources. Known results do not expire. A deep `unknown` from an older research version is automatically retried once on the next deep check; current-version unknowns remain cached until explicit refresh or a research update. `/brand check refresh` or `/brand screen refresh` explicitly refreshes selected finalists; the favorites menu can refresh an individual saved favorite. Upgrading a quick screen to a deep check reuses its web evidence and adds missing registry checks without repeating web search.
+Search runs through pi's `web_search` tool and its permission hooks. Raw results and speculative names never enter the main conversation.
 
-Research uses the installed `web_search` tool through Pi's nested-tool API and permission hooks. Enable that extension before checking. Searches use complementary, product-aware query angles and retry once when no source-linked results are returned. Missing tools, blocked searches, failed requests and unsupported model judgments can still remain unknown. Raw search results and speculative pools do not enter the main conversation; command-dispatched checks use one short request for the owned `brand_check` operation, then automatically return a concise completion response. No manual `continue` is needed.
+## Storage
 
-## App storage and migration
-
-Default run location:
-
-```text
-$DATA/apps/pi-brand/runs/<project-name>-<canonical-path-hash>.json
-```
-
-Each project has its own run. Canonical paths keep symlinked checkouts on the same run; projects sharing a basename remain isolated. If `$DATA` is unset, use `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` remains an explicit override. `/brand stats` displays the actual path.
-
-Run data is version 2 and includes history, favorites, finalists, the current brief, reserve, evidence and generation metrics. Files are atomically replaced with private permissions. Mutations within a Pi process are queued; multiple independent processes should not edit the same run simultaneously.
-
-On first load of a trusted project, an existing `.pi/brand.json` is imported only if the external run does not exist. A byte-for-byte `<run>.json.v1-backup` is created outside the repository before writing the upgraded state. Automatic import leaves the source file intact; remove it only after verifying the external copy. Untrusted projects never read/import local legacy files. Malformed or unsupported run files fail closed, never silently reset.
-
-This repository's existing naming run has already been migrated and its tracked `.pi/brand.json` removed. The original backup is retained under the app-data directory. Git history is not rewritten.
+Each project gets its own run file at `$DATA/apps/pi-brand/runs/`, falling back to `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` overrides the path, and `/brand stats` shows it. Writes are atomic and private. Older `.pi/brand.json` files are imported once with a backup; details in [docs/storage.md](docs/storage.md).
 
 ## Commands
 
@@ -138,6 +118,8 @@ npm test
 npm run validate
 ```
 
-Tests are offline and use fake model/search/fetch responses. They cover migration/backups, persistence, prototype-safe caches, exclusions, reserve reuse, timeouts/cancellation, source validation, cached-check preservation, finalist limits, RPC behavior, narrow terminal rendering and absence of main-context injection. Live model quality and provider latency still require a real naming run.
+Tests are offline and use fake model, search and fetch responses. Live model quality and provider latency still need a real naming run.
+
+`npm run demo` serves the browser demo locally, and `npm run media:capture` re-records the loop and hero.
 
 Public headless seams: `pi-brand/generation`, `pi-brand/engine`, `pi-brand/checker`, `pi-brand/store`. They take explicit state and request adapters, so a future CLI or browser interface can reuse the workflow instead of replacing it.

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Soleone/showcase/main/schema/showcase.schema.json",
+  "title": "pi-brand",
+  "pitch": "Name your product inside pi: pick favorites from ranked names, then check whether your finalists are taken.",
+  "description": "A naming workflow for pi: isolated model requests propose ranked names, a keyboard picker keeps favorites, and checks search the web and domain registries for up to three finalists, with sources.",
+  "kind": "agent-extension",
+  "stage": "product",
+  "year": 2026,
+  "tech": [
+    "TypeScript",
+    "pi"
+  ],
+  "repo": "https://github.com/Soleone/pi-brand",
+  "live": "https://pi-brand.soleone.xyz",
+  "media": {
+    "hero": "demo/media/hero.png",
+    "motion": "demo/media/demo.webp",
+    "capture": "npm run media:capture"
+  },
+  "demo": {
+    "strategy": "browser-terminal",
+    "local": "npm run demo",
+    "externals": [
+      {
+        "name": "Model provider",
+        "type": "model",
+        "seam": "pi.registerProvider; the demo's extension registers a scripted provider (demo/browser/home/.pi/agent/extensions/demo-model.ts)",
+        "standIn": "simulated",
+        "note": "The model is scripted: it returns fixed name lists and verdicts for a sample plant-watering app, and nothing is sent anywhere."
+      },
+      {
+        "name": "Web search",
+        "type": "service",
+        "seam": "the web_search tool pi-brand calls through pi; the demo registers its own (demo/browser/home/.pi/agent/extensions/demo-research.ts)",
+        "standIn": "simulated",
+        "note": "Search results are made up and point at example.com, example.org and example.net."
+      },
+      {
+        "name": "Domain registry (rdap.org)",
+        "type": "service",
+        "seam": "fetch; the demo answers rdap.org requests itself (demo/browser/home/.pi/agent/extensions/demo-research.ts)",
+        "standIn": "simulated",
+        "note": "Every sample .com counts as taken and .app as free unless a sample plant app holds the name. These are not real lookups."
+      }
+    ]
+  }
+}

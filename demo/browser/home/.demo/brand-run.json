@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "product": "",
+  "updatedAt": "2026-10-14T00:00:00.000Z",
+  "rounds": [],
+  "liked": [],
+  "dismissed": [],
+  "directionNotes": [],
+  "availability": {},
+  "finalists": [],
+  "brief": {
+    "direction": "",
+    "singleWord": true,
+    "maxLength": 12,
+    "domains": [
+      "com",
+      "app"
+    ],
+    "checkPackages": false
+  },
+  "model": "demo/scripted",
+  "reserve": [],
+  "generationMetrics": []
+}
