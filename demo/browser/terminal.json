@@ -18,7 +18,8 @@
   "env": {
     "PATH": "~/bin:/usr/local/bin:/usr/bin:/bin",
     "PI_OFFLINE": "1",
-    "PI_BRAND_CONFIG": "~/.demo/brand-run.json"
+    "DATA": "~/.local/share",
+    "PI_BRAND_CONFIG": "~/.local/share/apps/pi-brand/runs/demo.json"
   },
   "setup": [
     "chmod +x bin/pi bin/git bin/fd bin/rg",
@@ -28,14 +29,15 @@
   "start": "cd project && pi",
   "onTheme": "node .demo/pi-theme.js",
   "welcome": [
-    "\u001b[1mpi-brand\u001b[0m names your product inside pi: the model proposes names, you pick favorites, and it checks whether your finalists are taken.",
+    "\u001b[1mpi-brand\u001b[0m names your product inside pi: the model proposes names, you pick favorites, and it checks whether your favorites are taken.",
     "This is real pi with the extension. The model, the web search and the domain lookups are scripted samples, so it needs no key.",
     "pi opens by itself in an app that still needs a name. Press the first button above, then:",
     "",
     "  Space            pick a name as a favorite",
-    "  Enter            save them and open the overview",
-    "  Check finalists  in the overview: choose up to three, then Deep check",
-    "  /brand           the second button opens the overview again",
+    "  Enter / Esc      save selections and close",
+    "  2 Give feedback  refine the visible, editable naming brief",
+    "  3 Review favorites  select up to three names and check them",
+    "  /brand           resume; Brief / Details holds documents and settings",
     "",
     "Change the theme at the top right and pi follows it."
   ],

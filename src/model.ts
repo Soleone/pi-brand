@@ -2,14 +2,18 @@ import { createHash } from "node:crypto";
 import { Type, type TSchema, type Usage } from "@earendil-works/pi-ai";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { GenerationRequest } from "./generation.ts";
+import { GENERATION_SYSTEM_PROMPT, type GenerationRequest } from "./generation.ts";
 import { getBrandStatePath } from "./store.ts";
 
-export type BrandRequestRole = "creative" | "worker";
+export type BrandRequestRole = "creative" | "worker" | "brief";
 
 const REQUEST_PROFILES = {
+  brief: {
+    systemPrompt: "You edit a product naming brief in response to feedback. Make only the changes the feedback calls for. Preserve unrelated directions, avoidances, style and examples. An addition such as 'HQ could work too' expands the existing route, not replaces it. Later corrections supersede only the conflicting instruction. Never infer dictionary-only rules from single-token formatting. Do not generate names or do research. Return changed fields only using submit_result exactly once; no other tools or commentary.",
+    maxPromptChars: 14000, minTokens: 600, maxTokens: 2000,
+  },
   creative: {
-    systemPrompt: "You are a product naming specialist. Follow the supplied creative brief and word constraints. Generate ranked names, not availability reports. Do no research. Use submit_result exactly once; no other tools or commentary.",
+    systemPrompt: GENERATION_SYSTEM_PROMPT,
     maxPromptChars: 5000,
     minTokens: 800,
     maxTokens: 3000,

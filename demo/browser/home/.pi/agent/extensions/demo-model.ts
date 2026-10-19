@@ -1,7 +1,6 @@
 // A scripted model, so the demo runs real pi without an API key and nothing leaves the browser.
-// pi-brand makes three kinds of request, told apart by their system prompt: naming (a ranked list of names),
-// assessment (judging the search excerpts for up to three finalists), and the main agent, which pi-brand
-// asks to run brand_check. Each gets a fixed reply; the tools and pi-brand itself are real.
+// Naming, brief editing, assessment and the main agent each get scripted replies.
+// This demonstrates the real extension flow, not live model quality; the tools themselves are real.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   calculateCost,
@@ -89,6 +88,11 @@ function reply(context: { messages: Message[] }): Step {
   const prompt = text(context.messages.at(-1)?.content);
   // The system prompt arrives as the transcript's leading system message.
   const system = text(context.messages.find((message) => message.role === "system")?.content);
+  if (system.startsWith("You edit a product naming brief")) {
+    const current = prompt.match(/## Explore\n([\s\S]*?)\n## Avoid/)?.[1].trim() ?? "";
+    const feedback = prompt.split("User feedback (interpret in context, not as a replacement brief):\n").at(-1)?.trim() ?? "";
+    return fauxAssistantMessage([fauxToolCall("submit_result", { direction: [current, feedback].filter(Boolean).join("\n") })], toolUse);
+  }
   if (system.startsWith("You are a product naming specialist")) return namingReply(prompt);
   if (system.startsWith("You assess preliminary brand collisions")) return assessmentReply(prompt);
   return agentReply(context.messages);

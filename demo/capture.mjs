@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Records the browser demo (demo/browser) as the README loop, and the hero:
-// names for the sample app, a few picked as favorites, three chosen as finalists and checked. The hero is the favorites picker.
+// names for the sample app, a few picked as favorites, three selected and checked. The hero is the favorites picker.
 // Usage: npm run media:capture. Needs agent-browser (with its browser installed) and FFmpeg on the PATH.
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -61,19 +61,14 @@ try {
       await keys("Space", "Space", "ArrowDown", "Space", "ArrowDown", "ArrowDown", "ArrowDown", "Space");
       await page.run("screenshot", heroShot);
       await page.sleep(1000);
+      await keys("3");
+      await page.waitFor(shows("Review favorites"), { timeoutMs: 10_000 });
+      await page.sleep(1000);
       await keys("Enter");
-      await page.waitFor(shows("Brand overview"), { timeoutMs: 10_000 });
-      await page.sleep(1500);
-      await page.run("type", ".xterm-helper-textarea", "check");
-      await page.sleep(800);
-      await keys("Enter");
-      await page.waitFor(shows("Choose finalists"), { timeoutMs: 10_000 });
+      await page.waitFor(shows("Select up to 3 names to check"), { timeoutMs: 10_000 });
       await page.sleep(1000);
       await keys("Space", "Space", "Space");
       await page.sleep(600);
-      await keys("Enter");
-      await page.waitFor(shows("Deep check (cache first)"), { timeoutMs: 10_000 });
-      await page.sleep(800);
       await keys("Enter");
       await page.waitFor(shows("comes out best"), { timeoutMs: 60_000 });
       await page.sleep(4000);

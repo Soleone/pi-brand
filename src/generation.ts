@@ -4,6 +4,8 @@ import type { Candidate } from "./types.ts";
 export interface NamingBrief {
   product: string;
   direction: string;
+  avoid?: string;
+  style?: string;
   examples: string[];
   constraints: { singleWord: boolean; maxLength: number };
   excluded: string[];
@@ -24,19 +26,23 @@ function compact(value: string, limit: number): string {
   return value.trim().slice(0, limit);
 }
 
-function promptFor(brief: NamingBrief, excluded: Set<string>): string {
+export const GENERATION_SYSTEM_PROMPT = "You are a product naming specialist. Follow the supplied creative brief and word constraints. Generate ranked names, not availability reports. Do no research. Use submit_result exactly once; no other tools or commentary.";
+
+export function promptFor(brief: NamingBrief, excluded: Set<string>): string {
   const recent = [...excluded].slice(-24).map((item) => compact(item, 60));
-  const exampleLine = brief.examples.slice(-8).map((item) => compact(item, 60)).filter(Boolean).join(", ");
+  const exampleLine = brief.examples.join(", ");
   return [
     "Generate up to 24 candidate names in rank order. Include only a compact optional flavor note for each name.",
     "Follow the creative brief. Avoid obvious famous brands and same-category products using existing knowledge only. Do no availability or other research.",
-    `Product: ${compact(brief.product, 300)}`,
+    `Product: ${brief.product}`,
     brief.constraints.singleWord
-      ? "Use familiar, recognizable English single words; easy to spell."
-      : "Use familiar, recognizable words; spaces are allowed.",
-    `Maximum length: ${Math.max(1, Math.floor(brief.constraints.maxLength))} characters.`,
-    `Direction: ${compact(brief.direction, 500)}`,
-    exampleLine ? `Examples show taste only; do not copy: ${exampleLine}` : "",
+      ? "Format: one token, letters only, no spaces. Compounds and abbreviations are allowed unless the brief excludes them."
+      : "Format: letters and spaces only; multiple words are allowed.",
+    `Maximum length: ${brief.constraints.maxLength} characters.`,
+    `Explore: ${brief.direction || "No specific route yet."}`,
+    brief.avoid ? `Avoid: ${brief.avoid}` : "",
+    brief.style ? `Style: ${brief.style}` : "",
+    exampleLine ? `Explicit taste examples; do not copy: ${exampleLine}` : "",
     // Put changing round data last so refills preserve the stable brief prefix.
     `Do not use excluded names (${excluded.size} total); recent sample: ${recent.join(", ") || "none"}.`,
   ].filter(Boolean).join("\n");
@@ -50,7 +56,6 @@ function validName(name: string, brief: NamingBrief): boolean {
   const normalized = name.normalize("NFKC").trim();
   if (!normalized || normalized.length > brief.constraints.maxLength) return false;
   if (/\d|[-‐‑‒–—]/u.test(normalized)) return false;
-  if (/^(?:[Gg]et|[Tt]ry)[A-Z]/u.test(normalized)) return false;
   const pattern = brief.constraints.singleWord ? /^\p{L}+$/u : /^\p{L}+(?: \p{L}+)*$/u;
   return pattern.test(normalized);
 }
@@ -76,7 +81,7 @@ export async function generatePool(
   brief: NamingBrief,
   request: GenerationRequest,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
-): Promise<{ candidates: Candidate[]; metrics: { modelCalls: number; elapsedMs: number; usage?: Usage } }> {
+): Promise<{ candidates: Candidate[]; prompts: string[]; metrics: { modelCalls: number; elapsedMs: number; usage?: Usage } }> {
   const start = Date.now();
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? OPERATION_TIMEOUT_MS;
@@ -84,6 +89,7 @@ export async function generatePool(
   let modelCalls = 0;
   let usage: Usage | undefined;
   const pool: Candidate[] = [];
+  const prompts: string[] = [];
   const seen = new Set(brief.excluded.map(key));
   const abort = () => controller.abort(options.signal?.reason);
   if (options.signal?.aborted) abort();
@@ -104,8 +110,10 @@ export async function generatePool(
       const requestTimer = setTimeout(() => requestController.abort(new Error("Naming request timed out")), Math.min(REQUEST_TIMEOUT_MS, timeoutMs));
       modelCalls++;
       try {
+        const prompt = promptFor(brief, seen);
+        prompts.push(prompt);
         const result = await Promise.race([
-          request(promptFor(brief, seen), requestController.signal),
+          request(prompt, requestController.signal),
           new Promise<never>((_, reject) => requestController.signal.addEventListener("abort", () => reject(requestController.signal.reason ?? new Error("Naming request aborted")), { once: true })),
         ]);
         usage = addUsage(usage, result.usage);
@@ -129,7 +137,7 @@ export async function generatePool(
       }
     }
     if (pool.length === 0) throw new Error("Name generation returned no valid, non-excluded candidates");
-    return { candidates: pool, metrics: { modelCalls, elapsedMs: Date.now() - start, ...(usage ? { usage } : {}) } };
+    return { candidates: pool, prompts, metrics: { modelCalls, elapsedMs: Date.now() - start, ...(usage ? { usage } : {}) } };
   };
   try {
     return await Promise.race([run(), operationTimeout]);

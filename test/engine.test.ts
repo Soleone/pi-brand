@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { takeBatch } from "../src/engine.ts";
+import { recordExternalPool, takeBatch } from "../src/engine.ts";
 import { recordRound, setDirection } from "../src/store.ts";
 import { emptyBrandState } from "../src/types.ts";
 
@@ -23,6 +23,8 @@ test("more consumes the reserve without another model request", async () => {
 
 test("direction changes invalidate the reserve; already-shown names never return", async () => {
   const state = emptyBrandState("tasks");
+  recordExternalPool(state, [{ name: "Shown" }, { name: "Available" }]);
+  state.reservePoolId = state.lastBatch!.poolId;
   state.reserve = [{ name: "Shown" }, { name: "Available" }];
   recordRound(state, { product: state.product, candidates: [{ name: "Shown" }] });
   const request = async () => { throw new Error("must not request"); };

@@ -28,6 +28,8 @@
     "test",
     "README.md",
     "docs/ui-navigation.md",
+    "docs/storage.md",
+    "docs/budgets-and-caching.md",
     "package.json",
     "tsconfig.json"
   ],

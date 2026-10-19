@@ -171,7 +171,7 @@ test("legacy import keeps historical data and a byte-for-byte external backup", 
   const legacy = path.join(cwd, ".pi", "brand.json");
   fs.writeFileSync(legacy, original);
   const imported = loadBrandState(cwd, true, env, home);
-  assert.equal(imported.state.version, 2);
+  assert.equal(imported.state.version, 3);
   assert.deepEqual(imported.state.directionNotes, ["short words"]);
   assert.equal(imported.state.brief.direction, "short words");
   assert.equal(imported.state.availability.ready.stage, "legacy");

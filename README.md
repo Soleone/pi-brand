@@ -1,10 +1,10 @@
 # pi-brand
 
-Name your product inside the [pi coding agent](https://pi.dev). The model proposes ranked names, you pick favorites in a keyboard picker, and pi-brand checks whether your finalists are taken: a web search, a domain lookup, and a short verdict with sources. None of it grows your main conversation.
+Name your product inside the [pi coding agent](https://pi.dev). Keep a visible naming brief, explore names in a keyboard picker, refine with feedback, and check the favorites worth pursuing.
 
-**[Try it in your browser](https://pi-brand.soleone.xyz)**: real pi with the extension, on a scripted model with sample search results, so no key and nothing leaves the page.
+**[Try it in your browser](https://pi-brand.soleone.xyz)**: real pi with scripted names and sample research. No API key; nothing leaves the page.
 
-![Names for a plant-watering app, four picked as favorites, three chosen as finalists and checked: Thirsty collides with a plant care app, Greenhour comes out clean](demo/media/demo.webp)
+![Naming and checking favorites inside pi](demo/media/demo.webp)
 
 ## Install
 
@@ -12,102 +12,87 @@ Name your product inside the [pi coding agent](https://pi.dev). The model propos
 pi install git:https://github.com/Soleone/pi-brand
 ```
 
-Requires pi **0.99.1 or newer** for nested tools and provider-neutral model requests. After updating, run `/reload`. Checks use the `web_search` tool, so enable a web search extension before running one.
+Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability checks need the `web_search` tool.
 
-## How it works
+## The everyday loop
 
-1. `/brand <what the product does>` generates a ranked pool in an isolated model request, then opens the favorites picker.
-2. **Space** toggles, **↑↓** moves, typing filters. **Enter** saves favorites. **Esc** opens a reject/note prompt; Esc again cancels the batch.
-3. Picker actions:
-   - **0**: save checked favorites and return to the overview, reserving unpicked names rather than rejecting them
-   - **1**: another batch, using the reserve first
-   - **2**: update the direction and get new names
-   - **3**: choose up to three finalists, then check them
-   - **4**: save the highlighted name as a favorite and get more like it
-4. `/brand finalists` promotes up to three favorites. Older favorites remain taste references, not a research queue. The finalist picker shows newest favorites first; Space toggles, Enter saves, Esc cancels.
-5. `/brand check` checks only finalists. `/brand evidence <name>` shows retained findings and source links.
-6. Once a product brief exists, **`/brand`**, `/brand overview`, and `/brand status` open the overview without generating. Saving, rejecting or cancelling a favorites round also returns there.
+1. `/brand <what the product does>` generates names from your saved brief.
+2. **Space** saves a selection as a favorite. **Enter or Esc** saves your selections and closes. Highlighting or filtering never implies a pick.
+3. Three next steps in the picker:
+   - **1 More names**: show the rest of the current pool, or generate another.
+   - **2 Give feedback**: explain what should change. See the brief changes, then get names from the revised brief.
+   - **3 Review favorites**: browse saved names and check the ones you select. No finalist promotion required.
+4. `/brand` resumes the workspace without generating. **Brief / Details** holds the editable documents, saved generation inputs, settings, and diagnostics.
 
-The overview shows favorites, finalists and their cached-check status, reserve, seen/excluded count, direction, and both model roles. Browse all favorites, choose finalists, inspect evidence/history, edit the brief, change models, or continue naming. The favorites list shows each item's status and has a cache-first **Check all favorites** action. It checks in batches of three; selecting one favorite offers individual deep/quick checks and explicit refreshes, without changing finalists. Terminal lists are searchable and show at most ten entries at a time. Esc backs out of subviews; Esc in the overview returns to chat. RPC uses supported select/input dialogs for the same actions.
+Unselected names are *seen*, not disliked. Closing never deletes or rewrites a round. Previously shown names remain available in History for later selection. **More like a name**, under batch details (`?`) or a favorite, adds a taste reference without silently favoriting it.
 
-You do not have to generate more names to finish shortlisting. With many favorites, go straight to **Choose finalists**. See [UI navigation and boundaries](docs/ui-navigation.md) for the complete flow and remaining command-only operations.
+## Your brief and feedback
 
-Default exploration makes **no network availability checks**. `/brand screen` explicitly requests a quick web screen of finalists. `/brand screened` opts into screening **three candidates before display**, three at a time rather than researching an entire speculative pool. Screened mode can add up to 45 seconds after generation.
+The canonical brief is an editable Markdown document with six sections: **Product, Explore, Avoid, Style, Examples, Format**. `/brand brief edit` opens the whole document. You can also edit it directly; `/brand stats` shows its path.
 
-## Budgets and models
+Feedback makes targeted changes instead of replacing the entire direction. For example, “HQ could work too, e.g. TaskHQ” can add HQ constructions while keeping a control-center direction and existing avoidances. Your original words and the actual before/after interpretation are retained separately. Short acknowledgements show what changed; full changes remain in feedback history.
 
-`/brand-settings` picks a **creative** model for names and an optional cheaper **worker** model for judging search evidence. Both are saved with this project's run and never switch your main session model. The default creative model is `openai/gpt-6-luna`.
+- `/brand feedback <comment>` updates the brief without generating.
+- `/brand pivot <comment>` updates it, then generates.
+- `/brand history` opens the editable feedback document. Annotate or correct the record there; edit the **brief** to change what applies now.
+- Favorites are saved choices, not hidden prompt instructions. Explicit examples in the brief determine taste references.
+- Single-word format means one token, not dictionary-only. Compounds and abbreviations such as TaskHQ are allowed unless your brief excludes them. Names use letters, plus spaces when multiple words are enabled.
 
-Every request is single-turn and isolated: it sees a compact brief, a few of your favorites as taste examples and a sample of excluded names, never the conversation. A batch is at most two requests and 24 names; you see 12 and the rest wait in a reserve, so **More** is often free. Checks run three names at a time within 45 seconds. `/brand stats` shows time, tokens and cost per batch.
+Historical notes are preserved but not blindly replayed. Imported notes are labeled with unknown original author/date rather than attributed to you. Invalid documents fail with an error; they are never silently replaced.
 
-Exact limits, timeouts and how prompt caching is (and isn't) used are in [docs/budgets-and-caching.md](docs/budgets-and-caching.md).
+## No mystery rounds
 
-## One current brief
+Each generated pool retains its brief revision, effective inputs, explicit examples, model, system prompt, exact request prompts (including a refill), and original candidates. `/brand round [id]` or **Why these names?** inspects them. Old rounds without recorded inputs say so instead of inventing provenance.
 
-`/brand brief` shows the current product, direction, constraints and both model roles. Historical direction notes are retained but no longer replayed. `/brand note` and `/brand pivot` replace the current direction instead of stacking contradictory instructions.
+The picker distinguishes **new generation** from **remaining names from a previous pool**. Brief or creative-model changes invalidate old reserves. Generating uses single-turn isolated requests, not your main conversation. Inspection only brings the requested context into chat.
 
-Defaults: familiar single words, up to 12 characters, inspect `.com` and `.app`, package/handle checks off.
+Default naming does **no availability research**. See [budgets and caching](docs/budgets-and-caching.md) for request limits, costs, and the optional screened mode.
 
-```text
-/brand note familiar, energetic English words
-/brand words single
-/brand words multiple
-/brand length 10
-/brand domains com dev
-/brand packages on
-```
+## Check favorites when ready
 
-Package and repository checks are opt-in because a consumer app need not have an unused npm name. Changing check requirements retains existing cached findings; request a refresh explicitly if needed.
+**Review favorites → Check selected favorites** checks up to three names. Selecting one favorite also offers **Check availability**. **Check all favorites** explicitly checks the list in batches. Cached findings are reused; refresh and quick-screen controls live under each favorite’s Details.
 
-## Evidence, not legal clearance
+Results use `perfect / good / decent / bad / terrible`, or **unknown** when evidence is incomplete. They retain reasons, URLs, excerpts, and timestamps. `/brand evidence <name>` shows them. These are preliminary collision findings, **not trademark clearance**. A registry “no record found” is not a promise that a domain is registrable or affordable.
 
-Results use `perfect / good / decent / bad / terrible`, plus **unknown** when evidence is incomplete. They describe the checks performed, not trademark clearance. Missing signals never count as a clean result, and a strong unrelated brand is kept apart from a same-category collision.
+## Storage stays outside your project
 
-Each result keeps its reasons, source URLs, short excerpts and timestamps; `/brand evidence <name>` shows them. Deep checks add domain registry lookups and, if enabled, npm and GitHub. A registry 404 means **no record found**, not that a domain is registrable or affordable. Results are cached until you refresh them (`/brand check refresh`), and a quick screen upgrades to a deep check without searching again.
-
-Search runs through pi's `web_search` tool and its permission hooks. Raw results and speculative names never enter the main conversation.
-
-## Storage
-
-Each project gets its own run file at `$DATA/apps/pi-brand/runs/`, falling back to `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` overrides the path, and `/brand stats` shows it. Writes are atomic and private. Older `.pi/brand.json` files are imported once with a backup; details in [docs/storage.md](docs/storage.md).
-
-## Commands
+Default location:
 
 ```text
-/brand                    overview when a brief exists; otherwise start a run
-/brand overview|status    overview without generation
-/brand <description>      generate and pick favorites
-/brand more              next reserve batch or bounded generation
-/brand pivot <note>       new direction, then generate
-/brand note <note>        update direction only
-/brand likes             favorites and finalists
-/brand finalists [names]  choose at most three favorites
-/brand check [refresh]    deeper finalist checks
-/brand check <name>       show one cached result
-/brand screen [refresh]   quick finalist web screen
-/brand screened          screen three names before display
-/brand evidence <name>    retained findings and source links
-/brand brief             current brief and model
-/brand-settings          choose creative and worker models for this project
-/brand settings          same settings menu
-/brand model <provider/id>
-/brand worker <provider/id|same>
-/brand words single|multiple
-/brand length <3-30>
-/brand domains <suffixes>
-/brand packages on|off
-/brand stats             path, reserve and generation metrics
-/brand keep <names>      save favorites from a recorded batch
-/brand dismiss <names>   exclude names; remove from favorites and finalists
-/brand excluded          complete seen/excluded name list
-/brand history           recorded candidates, reserve, dismissals and direction notes
-/brand clear             confirm clearing this run; backup remains
-/brand help
+$DATA/apps/pi-brand/runs/<project>-<path-hash>.json
+$DATA/apps/pi-brand/runs/<project>-<path-hash>.brief.md
+$DATA/apps/pi-brand/runs/<project>-<path-hash>.feedback.md
 ```
 
-Separate multiple names with commas, especially multiword names. Print/JSON mode saves candidate batches; use `keep` and `finalists` to select without the terminal picker. RPC uses select dialogs, not terminal components.
+Without `$DATA`, use `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` can override the JSON path, but **project-local paths are rejected**, including symlink escapes. All documents remain beside the external run file. No new `.pi/brand.json` or other run data is written into the project.
 
-Compatibility tools `brand_pick`, `brand_score` and `brand_seen` remain available. The owned workflow uses `brand_generate` and `brand_check`; callers no longer need per-name cache choreography. `brand_score` supports a batch `names` lookup. Manual legacy signal recording remains supported without manufacturing missing signals.
+Existing runs migrate with an external backup, preserving favorites, rounds, cached evidence, and historical notes. Untraced old reserves are cleared rather than presented as fresh results. See [storage and migration](docs/storage.md).
+
+## Commands and settings
+
+The workspace covers normal use. Command equivalents:
+
+```text
+/brand                   resume the workspace
+/brand <description>     start naming
+/brand more              continue the pool or generate
+/brand feedback <text>   interpret feedback; show brief changes
+/brand pivot <text>      apply feedback and generate
+/brand brief [edit]      inspect/edit the naming document
+/brand history           inspect/annotate feedback history
+/brand round [id]        inspect actual saved generation inputs
+/brand check [names]     select/check saved favorites
+/brand evidence <name>   read retained findings
+/brand settings          choose creative and optional worker models
+/brand stats             document paths and generation metrics
+/brand help              advanced commands and compatibility aliases
+```
+
+Separate multiple names with commas. Models, domain suffixes, and optional npm/GitHub checks live under **Brief / Details → Settings**. These settings never change your main session model. Existing `note`, `finalists`, word/length controls, quick screens, and manual keep/dismiss commands remain compatible; finalist selection is optional, not the main flow.
+
+Chat tools are `brand_context`, `brand_feedback`, `brand_generate`, and `brand_check`. Compatibility tools `brand_pick`, `brand_score`, and `brand_seen` remain callable through codemode rather than cluttering the main tool list.
+
+[UI navigation](docs/ui-navigation.md) covers terminal, RPC, and non-interactive behavior.
 
 ## Development
 
@@ -118,8 +103,6 @@ npm test
 npm run validate
 ```
 
-Tests are offline and use fake model, search and fetch responses. Live model quality and provider latency still need a real naming run.
+Tests use fake models, search, and fetch responses. Live naming quality and provider latency still need real runs. `npm run demo` serves the scripted browser demo; `npm run media:capture` records it.
 
-`npm run demo` serves the browser demo locally, and `npm run media:capture` re-records the loop and hero.
-
-Public headless seams: `pi-brand/generation`, `pi-brand/engine`, `pi-brand/checker`, `pi-brand/store`. They take explicit state and request adapters, so a future CLI or browser interface can reuse the workflow instead of replacing it.
+Public headless seams: `pi-brand/generation`, `pi-brand/engine`, `pi-brand/checker`, `pi-brand/store`.

@@ -1,15 +1,29 @@
-# App storage and migration
+# External run storage and editable documents
 
-Default run location:
+The default JSON path remains stable across this upgrade:
 
 ```text
 $DATA/apps/pi-brand/runs/<project-name>-<canonical-path-hash>.json
 ```
 
-Each project has its own run. Canonical paths keep symlinked checkouts on the same run; projects sharing a basename remain isolated. If `$DATA` is unset, use `$XDG_DATA_HOME/pi-brand/runs/` or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` remains an explicit override. `/brand stats` displays the actual path.
+The canonical naming document and human feedback history live beside it as `<stem>.brief.md` and `<stem>.feedback.md`. Without DATA, use `$XDG_DATA_HOME/pi-brand/runs/`, or `~/.local/share/pi-brand/runs/`. `PI_BRAND_CONFIG` overrides the external JSON path; sibling document names follow it. `/brand stats` shows all three paths.
 
-Run data is version 2 and includes history, favorites, finalists, the current brief, reserve, evidence and generation metrics. Files are atomically replaced with private permissions. Mutations within a Pi process are queued; multiple independent processes should not edit the same run simultaneously.
+**Project-local storage is forbidden**, even with an explicit override or a symlink pointing back into the project. For Git projects, the repository root is the boundary, not just the current subdirectory. Relative data roots that resolve into the project are rejected too. No run files, naming documents, or migration backups are created there.
 
-On first load of a trusted project, an existing `.pi/brand.json` is imported only if the external run does not exist. A byte-for-byte `<run>.json.v1-backup` is created outside the repository before writing the upgraded state. Automatic import leaves the source file intact; remove it only after verifying the external copy. Untrusted projects never read/import local legacy files. Malformed or unsupported run files fail closed, never silently reset.
+Canonical paths keep symlinked checkouts on the same run; unrelated projects sharing a basename remain isolated. Writes use atomic replacement and private permissions. Brief updates verify the document has not changed since loading it. A direct edit observed while an isolated feedback request is in flight is not overwritten. Independent Pi processes should still not write the same run simultaneously.
 
-This repository's existing naming run has already been migrated and its tracked `.pi/brand.json` removed. The original backup is retained under the app-data directory. Git history is not rewritten.
+## Sources of truth
+
+- **Naming brief:** the Markdown document is authoritative. Its six sections are Product, Explore, Avoid, Style, Examples, and Format. Reading imports valid direct edits into the active context; the next mutation records their new revision. Invalid or oversized inputs are reported rather than silently truncated or reset.
+- **Feedback:** JSON retains original comments, source, author, before/after context, actual changes, and interpretation failures. The Markdown history is an editable reference document. Your annotations survive subsequent appended entries. Annotating it does not automatically alter active generation instructions; update the brief to do that.
+- **Generation:** version 3 JSON retains immutable pool inputs and exact prompts, linked to viewed rounds. Pools distinguish generated and externally supplied candidates. Older records explicitly lack provenance. Favorites and cached evidence remain structured run data.
+
+## Migration
+
+A trusted project's old `.pi/brand.json` is read only if no external run exists and no explicit override is set. Its byte-for-byte `.v1-backup` is written externally before import. Untrusted projects never import local data. The original local file is not modified or deleted automatically.
+
+Existing external v1/v2 runs receive a byte-for-byte `.v2-backup` before conversion to version 3. Favorites, rounds, dismissals, model settings, cached evidence, and historical direction notes survive. Historical notes have unknown original attribution/date; the migration does not pretend an assistant summary is a user quote or infer a new active brief from conflicting history.
+
+Old reserves without generation inputs are discarded with a warning. Existing naming preferences seed the first canonical brief. Current, explicit feedback can then refine it. Migration is idempotent; later loads do not append duplicate imported notes.
+
+Corrupt and future-version JSON fails closed. Missing or malformed documents in an established version 3 run also fail rather than replacing user content. A clear-run command creates an external reset backup and retains the active brief, feedback, and model settings.

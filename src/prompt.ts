@@ -6,7 +6,9 @@ export function buildNamingBrief(state: BrandState): NamingBrief {
   return {
     product: state.product,
     direction: state.brief.direction,
-    examples: state.liked.slice(-8).map((entry) => entry.name),
+    avoid: state.brief.avoid,
+    style: state.brief.style,
+    examples: [...state.brief.examples],
     constraints: { singleWord: state.brief.singleWord, maxLength: state.brief.maxLength },
     excluded: [...seenNames(state)],
   };
@@ -19,7 +21,7 @@ export function buildMorePrompt(_state: BrandState): string {
 
 export function buildAvailabilityPrompt(state: BrandState, stage: "screen" | "deep" = "deep", refresh = false, names = state.finalists, allFavorites = false): string {
   if (allFavorites) return `Call brand_check once with stage ${stage}, refresh ${refresh}, and allFavorites true to check every saved favorite in batches of up to three. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
-  if (names.length === 0) return "Choose up to three favorites as finalists with /brand finalists first.";
+  if (names.length === 0) return "Save some favorites with /brand first, then choose names to check from Review favorites.";
   const target = names.length === 1 ? "saved favorite" : "saved favorites";
   return `Call brand_check once with stage ${stage}, refresh ${refresh}, and names ${JSON.stringify(names)} for these ${target}. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
 }

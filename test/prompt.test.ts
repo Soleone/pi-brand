@@ -3,14 +3,17 @@ import test from "node:test";
 import { buildAvailabilityPrompt, buildMorePrompt, buildNamingBrief } from "../src/prompt.ts";
 import { emptyBrandState } from "../src/types.ts";
 
-test("naming brief uses one current direction and at most eight taste examples", () => {
+test("naming brief uses the canonical sections and explicit taste examples, not recent favorites", () => {
   const state = emptyBrandState("a keyboard todo app");
   state.brief.direction = "familiar confident words";
+  state.brief.examples = ["TaskHQ", "Control room"];
+  state.brief.avoid = "Synthetic syllables";
   state.directionNotes = ["obsolete constraint", "accidental conversation fragment"];
   state.liked = Array.from({ length: 30 }, (_, index) => ({ name: `Taste${index}`, likedAt: "2026-01-01" }));
   const brief = buildNamingBrief(state);
   assert.equal(brief.direction, "familiar confident words");
-  assert.equal(brief.examples.length, 8);
+  assert.deepEqual(brief.examples, ["TaskHQ", "Control room"]);
+  assert.equal(brief.avoid, "Synthetic syllables");
   assert.equal(brief.excluded.length, 30);
   assert.doesNotMatch(JSON.stringify(brief), /obsolete|accidental/);
 });
@@ -33,7 +36,7 @@ test("check prompt names only finalists and delegates all bookkeeping", () => {
 });
 
 test("empty finalist list never asks for broad research", () => {
-  assert.match(buildAvailabilityPrompt(emptyBrandState()), /Choose up to three/);
+  assert.match(buildAvailabilityPrompt(emptyBrandState()), /Save some favorites/);
 });
 
 test("fallback generation prompt stays constant as history grows", () => {

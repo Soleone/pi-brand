@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { isAvailabilityScore, type CollisionSignals } from "./scoring.ts";
+import { applyBriefChanges, documentHash, formatBrief, formatFeedbackEntry, namingContent, parseBrief } from "./brief.ts";
 import {
   emptyBrandState,
   type AvailabilityRecord,
@@ -31,7 +32,7 @@ export function getBrandStatePath(
   homeDirectory = os.homedir(),
 ): string {
   const explicit = env.PI_BRAND_CONFIG?.trim();
-  if (explicit) return path.resolve(cwd, expandHome(explicit, homeDirectory));
+  if (explicit) return externalPath(path.resolve(cwd, expandHome(explicit, homeDirectory)), cwd);
   let identity = path.resolve(cwd);
   try { identity = fs.realpathSync(identity); } catch (error) { if (!isMissingFile(error)) throw error; }
   const slug = path.basename(identity).replace(/[^a-zA-Z0-9_-]/g, "-") || "run";
@@ -40,7 +41,36 @@ export function getBrandStatePath(
   const root = data
     ? path.join(path.resolve(expandHome(data, homeDirectory)), "apps", "pi-brand")
     : path.join(env.XDG_DATA_HOME || path.join(homeDirectory, ".local", "share"), "pi-brand");
-  return path.join(root, "runs", `${slug}-${hash}.json`);
+  return externalPath(path.join(root, "runs", `${slug}-${hash}.json`), cwd);
+}
+
+function canonicalPath(target: string): string {
+  try { return fs.realpathSync(target); }
+  catch (error) {
+    if (!isMissingFile(error)) throw error;
+    if (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) return canonicalPath(path.resolve(path.dirname(target), fs.readlinkSync(target)));
+    const parent = path.dirname(target);
+    if (parent === target) throw error;
+    return path.join(canonicalPath(parent), path.basename(target));
+  }
+}
+
+function externalPath(target: string, cwd: string): string {
+  let project = canonicalPath(path.resolve(cwd));
+  for (let directory = project; ; directory = path.dirname(directory)) {
+    if (fs.existsSync(path.join(directory, ".git"))) { project = directory; break; }
+    if (path.dirname(directory) === directory) break;
+  }
+  const relative = path.relative(project, canonicalPath(target));
+  if (!relative || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) {
+    throw new Error("pi-brand data must be outside the project. Set DATA to an external data directory, or use an external PI_BRAND_CONFIG path.");
+  }
+  return target;
+}
+
+export function brandDocumentPaths(statePath: string) {
+  const base = statePath.replace(/\.json$/, "");
+  return { brief: `${base}.brief.md`, feedback: `${base}.feedback.md` };
 }
 
 export function loadBrandState(
@@ -50,6 +80,9 @@ export function loadBrandState(
   homeDirectory = os.homedir(),
 ): LoadedBrandState {
   const statePath = getBrandStatePath(cwd, trustedProject, env, homeDirectory);
+  const documents = brandDocumentPaths(statePath);
+  externalPath(documents.brief, cwd);
+  externalPath(documents.feedback, cwd);
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(statePath, "utf8")) as unknown;
@@ -74,36 +107,70 @@ export function loadBrandState(
 
   const parsed = normalizeState(raw);
   if (!parsed) throw new Error(`${statePath}: unrecognized run data; refusing to overwrite it.`);
-  return { state: parsed, path: statePath, isNew: false, warnings: [] };
+  const warnings: string[] = [];
+  if ((raw as { version: number }).version < 3) {
+    const backup = `${statePath}.v2-backup`;
+    try { fs.copyFileSync(statePath, backup, fs.constants.COPYFILE_EXCL); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    if (parsed.reserve.length) warnings.push("Old reserved names were cleared because their generation inputs were not recorded.");
+    parsed.reserve = [];
+    saveBrandState(statePath, parsed);
+    warnings.push(`Naming brief and feedback history are now editable outside the project: ${documents.brief}`);
+  }
+  const markdown = fs.readFileSync(documents.brief, "utf8");
+  let content;
+  try { content = parseBrief(markdown); }
+  catch (error) { throw new Error(`Fix the naming document at ${documents.brief}: ${errorMessage(error)}`); }
+  if (JSON.stringify(content) !== JSON.stringify(namingContent(parsed))) {
+    applyBriefChanges(parsed, content, { text: markdown, source: "file", author: "unknown" });
+  }
+  parsed.briefDocumentHash = documentHash(markdown);
+  return { state: parsed, path: statePath, isNew: false, warnings };
 }
 
 export function saveBrandState(statePath: string, state: BrandState): void {
   const directory = path.dirname(statePath);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const payload: BrandState = { ...state, version: 2, updatedAt: new Date().toISOString() };
-  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
-  const temporary = path.join(directory, `.pi-brand.${process.pid}.${Date.now()}.tmp`);
+  const documents = brandDocumentPaths(statePath);
+  let existing: string | undefined;
+  try { existing = fs.readFileSync(documents.brief, "utf8"); }
+  catch (error) { if (!isMissingFile(error)) throw error; }
+  if (existing !== undefined && documentHash(existing) !== state.briefDocumentHash) throw new Error(`The naming brief changed on disk. Reload it before saving: ${documents.brief}`);
+  const markdown = existing !== undefined && JSON.stringify(parseBrief(existing)) === JSON.stringify(namingContent(state)) ? existing : formatBrief(namingContent(state));
+  state.briefDocumentHash = documentHash(markdown);
+  atomicWrite(documents.brief, markdown);
+  let history = "# Feedback history\n\nOriginal comments and interpretations are retained separately from the active brief.\nYou may annotate or correct this document. Change the naming brief to affect generation.\n\n";
+  try { history = fs.readFileSync(documents.feedback, "utf8"); }
+  catch (error) { if (!isMissingFile(error)) throw error; }
+  for (const entry of state.feedback) {
+    if (!history.includes(`<!-- feedback:${entry.id} -->`)) history += `\n${formatFeedbackEntry(entry)}`;
+  }
+  atomicWrite(documents.feedback, history);
+  const payload: BrandState = { ...state, version: 3, updatedAt: new Date().toISOString() };
+  atomicWrite(statePath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
+export function saveFeedbackDocument(statePath: string, markdown: string, expected: string): void {
+  const target = brandDocumentPaths(statePath).feedback;
+  if (fs.readFileSync(target, "utf8") !== expected) throw new Error("Feedback history changed on disk. Reopen it before saving.");
+  atomicWrite(target, markdown);
+}
+
+function atomicWrite(target: string, content: string): void {
+  const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(temporary, serialized, { encoding: "utf8", mode: 0o600 });
-    fs.renameSync(temporary, statePath);
-    try {
-      fs.chmodSync(statePath, 0o600);
-    } catch {
-      // Best effort on platforms without chmod.
-    }
+    fs.writeFileSync(temporary, content, { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(temporary, target);
+    fs.chmodSync(target, 0o600);
   } catch (error) {
-    try {
-      fs.unlinkSync(temporary);
-    } catch {
-      // Preserve the original write error.
-    }
+    try { fs.unlinkSync(temporary); } catch { /* Preserve the original error. */ }
     throw error;
   }
 }
 
 export function recordRound(
   state: BrandState,
-  input: { product: string; candidates: Candidate[]; directionHint?: string },
+  input: { product: string; candidates: Candidate[]; directionHint?: string; poolId?: string; origin?: BrandRound["origin"]; briefRevision?: number },
 ): BrandRound {
   const round: BrandRound = {
     id: `r${state.rounds.length + 1}-${Date.now().toString(36)}`,
@@ -111,6 +178,7 @@ export function recordRound(
     product: input.product.trim(),
     directionHint: input.directionHint?.trim() || undefined,
     candidates: input.candidates,
+    poolId: input.poolId, origin: input.origin ?? "legacy", briefRevision: input.briefRevision,
   };
   state.rounds.push(round);
   if (input.directionHint?.trim() && !state.directionNotes.includes(input.directionHint.trim())) {
@@ -192,10 +260,9 @@ export function recordAvailability(
 }
 
 export function setDirection(state: BrandState, note: string): void {
-  const direction = note.trim().slice(0, 1000);
+  const direction = note.trim();
   if (!direction) throw new Error("Provide a naming direction.");
-  if (state.brief.direction !== direction) state.reserve = [];
-  state.brief.direction = direction;
+  applyBriefChanges(state, { direction }, { text: note, source: "command", author: "user" });
   if (!state.directionNotes.includes(direction)) state.directionNotes.push(direction);
 }
 
@@ -266,7 +333,7 @@ export function excludedNames(state: BrandState): { seen: Set<string>; kept: Set
 function normalizeState(raw: unknown): BrandState | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (record.version !== 1 && record.version !== 2) return undefined;
+  if (record.version !== 1 && record.version !== 2 && record.version !== 3) return undefined;
   if (!Array.isArray(record.rounds) || !Array.isArray(record.liked)) return undefined;
   const state = emptyBrandState(typeof record.product === "string" ? record.product : "");
   if (typeof record.updatedAt === "string") state.updatedAt = record.updatedAt;
@@ -323,11 +390,14 @@ function normalizeState(raw: unknown): BrandState | undefined {
     }
   }
   state.directionNotes = [...new Set(state.directionNotes)];
-  state.brief.direction = state.directionNotes.at(-1)?.slice(0, 1000) ?? "";
+  state.brief.direction = state.directionNotes.at(-1) ?? "";
   const brief = record.brief;
   if (brief && typeof brief === "object" && !Array.isArray(brief)) {
     const prefs = brief as Record<string, unknown>;
-    if (typeof prefs.direction === "string") state.brief.direction = prefs.direction.slice(0, 1000);
+    if (typeof prefs.direction === "string") state.brief.direction = prefs.direction;
+    if (typeof prefs.avoid === "string") state.brief.avoid = prefs.avoid;
+    if (typeof prefs.style === "string") state.brief.style = prefs.style;
+    if (Array.isArray(prefs.examples)) state.brief.examples = prefs.examples.filter((name): name is string => typeof name === "string");
     if (typeof prefs.singleWord === "boolean") state.brief.singleWord = prefs.singleWord;
     if (typeof prefs.maxLength === "number" && Number.isInteger(prefs.maxLength) && prefs.maxLength >= 3 && prefs.maxLength <= 30) state.brief.maxLength = prefs.maxLength;
     if (Array.isArray(prefs.domains)) state.brief.domains = prefs.domains.filter((suffix): suffix is string => typeof suffix === "string" && /^[a-z]{2,12}$/.test(suffix)).slice(0, 3);
@@ -342,6 +412,17 @@ function normalizeState(raw: unknown): BrandState | undefined {
   }
   if (Array.isArray(record.generationMetrics)) {
     state.generationMetrics = record.generationMetrics.filter((item) => item && typeof item === "object" && typeof item.model === "string" && Number.isFinite(item.elapsedMs) && Number.isFinite(item.modelCalls) && Number.isFinite(item.generated)).slice(-50);
+  }
+  if (record.version === 3) {
+    if (!Number.isInteger(record.briefRevision) || (record.briefRevision as number) < 1 || !Array.isArray(record.feedback) || !Array.isArray(record.pools)) throw new Error("Invalid naming context in saved run; refusing to replace it.");
+    state.briefRevision = record.briefRevision as number;
+    state.feedback = record.feedback as BrandState["feedback"];
+    state.pools = record.pools as BrandState["pools"];
+    state.briefDocumentHash = typeof record.briefDocumentHash === "string" ? record.briefDocumentHash : undefined;
+    state.reservePoolId = typeof record.reservePoolId === "string" ? record.reservePoolId : undefined;
+    state.lastBatch = record.lastBatch as BrandState["lastBatch"];
+  } else {
+    state.feedback = state.directionNotes.map((text, index) => ({ id: `legacy-${index}`, createdAt: new Date().toISOString(), author: "unknown", source: "legacy", text, briefRevision: 1, changes: [] }));
   }
   return state;
 }
@@ -390,6 +471,9 @@ function normalizeRound(entry: unknown): BrandRound | undefined {
     createdAt: typeof record.createdAt === "string" ? record.createdAt : new Date().toISOString(),
     product: typeof record.product === "string" ? record.product : "",
     directionHint: typeof record.directionHint === "string" ? record.directionHint : undefined,
+    poolId: typeof record.poolId === "string" ? record.poolId : undefined,
+    origin: record.origin === "generated" || record.origin === "reserve" || record.origin === "external" ? record.origin : "legacy",
+    briefRevision: typeof record.briefRevision === "number" ? record.briefRevision : undefined,
     candidates,
   };
 }

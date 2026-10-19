@@ -1,43 +1,36 @@
-# Naming workspace navigation
+# Naming flow
 
-The overview is the hub, not another naming round. Once a brief exists, `/brand`, `/brand overview`, and `/brand status` open it without model calls.
+The everyday loop is **generate → favorite/react → refine → generate**. Checking saved favorites is available whenever you are ready, without promotion to a separate finalist list.
 
-## Navigation coverage
+| Surface | Actions | Exit |
+| --- | --- | --- |
+| `/brand` workspace | More names, Give feedback, Review favorites; Brief / Details is secondary | Esc/Close returns to chat without generating |
+| Names picker | Space toggles; 1 More names; 2 Give feedback; 3 Review favorites; ? Batch details | Enter or Esc saves explicit selections and closes |
+| Feedback editor | Enter a comment; the isolated brief editor makes targeted changes and reports the actual diff | Cancel keeps the current brief; interpretation failures retain the raw comment |
+| Favorites | Browse status, Check selected favorites, explicitly Check all; one name offers availability, similar names, removal, details | Back/Esc returns to workspace |
+| Check selection | Select up to three saved favorites, then run a default deep check | Esc cancels without changing favorites |
+| Favorite details | Sources, refresh availability, quick screen, explicit quick refresh | Back/Esc returns |
+| Brief / Details | Edit naming brief, Feedback history, Why these names?, Settings, History, Statistics | Back/Esc returns to workspace |
+| Naming document | Edit Product, Explore, Avoid, Style, Examples, and Format in one editor | Save validates and records changes; Cancel leaves it alone |
+| Feedback document | Read original comments and interpretations; add corrections or annotations | Save preserves annotations; active brief remains unchanged |
+| Saved round | Inspect actual inputs or save previously shown names as favorites | Closing never rewrites the round |
+| Settings | Models, domain suffixes, optional package/repository checks | Back/Esc returns |
 
-| Surface | Enter from | Actions | Return path |
-| --- | --- | --- | --- |
-| Overview | `/brand`; completed/cancelled/rejected favorites round; picker `0` | Favorites, finalists, checks, evidence, more names, brief, models, history, stats | Esc or Close overview returns to chat |
-| Favorites picker | New product, `/brand more`, overview More names, generation tools | Space toggles; Enter saves; 1 more; 2 direction; 3 finalists then deep check; 4 more like highlighted; 0 save picks and pause | Save/reject/cancel/0 returns to overview; 1/2/4 continue naming |
-| Rejection note | Esc or empty Enter in favorites picker | Enter rejects the whole round and saves an optional direction; Esc with text returns to picker | Esc on an empty rejection note cancels the batch, reserves it, then opens overview |
-| Direction note | Picker 2 | Enter saves picks and generates in the new direction; empty direction continues current direction | Esc returns to picker |
-| Favorite browser | Overview Browse favorites | The searchable list shows each favorite's cached status and offers Check all favorites (cache-first deep checks in batches of three); selecting one opens evidence, individual checks/refreshes, finalist selection, and confirmed dismissal | Back/Esc returns to overview; checks automatically complete back in chat without a manual `continue` |
-| Finalist picker | Overview, `/brand finalists`, favorites picker 3 | Save 0-3 selections; clear with empty Enter; favorites themselves stay intact | Overview action returns to overview; direct command returns to chat; picker 3 then dispatches a check |
-| Check selection | Overview Check finalists | Deep or quick, cache first or explicit refresh | Back/Esc returns to overview; command checks automatically complete back in chat without a manual `continue` |
-| Evidence | Overview or `/brand evidence <name>` | Read score, reasons, warnings, retained URLs, stage/date | Overview resumes after notification; direct command returns to chat |
-| Brief | Overview Edit brief; `/brand brief` and field commands | Product, direction, word count rule, max length, domains, package checks | Overview resumes after edits; command returns to chat |
-| Model settings | Overview; `/brand-settings`; `/brand settings` | Creative, worker or Same as creative; Save or Cancel | Overview caller returns there; direct command returns to chat |
-| Model selector | Settings role | Search authenticated scoped/available models | Esc cancels only the role change; Save settings persists the draft |
-| History | Overview History and exclusions; `/brand history`; `/brand excluded` | Read all recorded candidates, exclusions, reserve, historical direction | Back/Esc returns to overview; commands return to chat |
-| Generation stats | Overview or `/brand stats` | Read saved run path and generation-only metrics | Overview resumes; command returns to chat |
+## Predictable state
 
-RPC has the same favorites actions through select/input dialogs, including pause, direction, rejection, similar names and finalists. It cannot display custom terminal components. Print/JSON modes expose command alternatives and saved run data, without interactive navigation.
+- The cursor and filter never imply selection. “More like” adds an explicit taste reference, not a favorite.
+- Unselected names are seen, not negative taste feedback or explicit dismissals. Seen names are not automatically repeated; saved history lets you revisit them.
+- Enter and Esc have the same save-and-close behavior in ordinary exploration. Selection-only dialogs use Esc to cancel instead.
+- Closing or giving feedback does not remove candidates or rounds. There is no whole-round rejection mode.
+- More labels whether it serves the previous pool or performs a new request. Active brief and creative-model changes clear the reserve; a snapshot key also prevents stale inputs from being reused.
+- Favorites do not silently influence prompts. Add explicit examples or use More like a name. All effective naming instructions live in the document.
+- Feedback updates preserve unrelated sections. Short acknowledgements show changes; the feedback record retains the full before/after interpretation.
+- Legacy rounds retain their original names but have no fabricated generation inputs. Legacy finalists remain compatible with commands; the normal UI does not require them.
 
-## State consequences
+## Modes and boundaries
 
-- **Pause (`0`)** saves only explicitly toggled picks. Unpicked candidates go back to the reserve and are removed from that round's seen history, so resuming can show them again. The highlight and filter never imply selection.
-- **Cancel** reserves the whole batch and removes its round. It does not save toggled picks.
-- **Save** keeps selected favorites; unpicked names remain seen/excluded, as before.
-- **Reject** permanently excludes the round; it does not save toggled picks.
-- **More** saves picks and moves to the next reserve batch or bounded pool.
-- **Dismiss** removes a favorite and any finalist selection, retaining candidate history and cached evidence. `/brand keep <name>` can restore a recorded name manually.
-- **Creative model changes** clear the reserve. Worker changes do not. Neither changes favorites, history, cached checks, or Pi's session model.
-- **Settings Cancel** discards the entire draft. Saving settings makes no model requests.
+The terminal uses a bounded searchable picker. RPC uses supported select/editor dialogs with the same actions and state consequences. Print/JSON mode records pools and rounds without UI; use `keep`, `feedback`, `check <names>`, and `brand_context` to work non-interactively.
 
-## Deliberate boundaries and remaining gaps
+Command-driven checks need a tool context for nested web search. They dispatch one owned `brand_check` request, then return automatically to chat for the assistant's concise summary. Tool-driven screened mode can perform checks directly and return to the workspace. Inspect stored results on demand; no raw research is injected into unrelated conversation turns.
 
-- Command-driven checks need a tool execution context for nested web searches. They dispatch one owned `brand_check` request through Pi. When it finishes, the assistant automatically gives a concise completion response; no manual `continue` is needed. Checks can target finalists or explicitly selected saved favorites; Check all favorites processes the list in sequential batches of three. These checks do not change the finalist selection. Reopen `/brand` to see every saved status. A screened tool-driven workspace can perform its checks directly and return to overview.
-- Opt-in screening of three *new* candidates remains `/brand screened`; it is not the overview's ordinary More action. Clear-run confirmation and manual keep remain commands.
-- There is no dedicated winner/final-decision state, generic undo, run switcher, or arbitrary raw-state editor. Finalists are the persisted shortlist, not a legal-clearance claim.
-- Generation stats are not an all-operation spend ledger: assessment and failed/aborted request costs are excluded. Tool calls report nested usage to Pi.
-- Model settings are project-run settings, not user-wide defaults. There is no automatic price-based routing or quality fallback.
-- History and the actual saved JSON path are exposed for inspection. This is broad read access, not a claim that every stored field has its own editor or that every operation is available in every UI.
+No winner state, generic undo, run switcher, or automatic legal-clearance claim is introduced. Model settings remain per-project-run, not user-wide defaults. Generation statistics are not an all-operation spend ledger.

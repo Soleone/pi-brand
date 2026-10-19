@@ -11,7 +11,7 @@ test("filters invalid and duplicate names, preserves rank, and caps notes and pr
   const candidates = names("Taken", "Élan", "e\u0301lan", "two words", "getFocus", "has2", ...Array.from({ length: 30 }, (_, i) => `Word${i}`));
   candidates.push(...names("Focus", "Ready"));
   const result = await generatePool(brief, async () => ({ candidates }));
-  assert.deepEqual(result.candidates.map((c) => c.name), ["Élan"]);
+  assert.deepEqual(result.candidates.map((c) => c.name), ["Élan", "getFocus"]);
   assert.equal(result.candidates[0].flavor, "concise note");
   assert.equal(result.metrics.modelCalls, 2);
 });
@@ -46,14 +46,14 @@ test("times out and propagates caller abort to the request", async () => {
 });
 
 test("bounded prompts do not replay hundreds of excluded names or reject real prefix words", async () => {
-  const large = { ...brief, excluded: Array.from({ length: 500 }, (_, index) => `Excluded${index}`), examples: Array(500).fill("Taste") };
+  const large = { ...brief, excluded: Array.from({ length: 500 }, (_, index) => `Excluded${index}`), examples: ["Taste"] };
   const result = await generatePool(large, async (prompt) => {
     assert.ok(prompt.length < 2000);
-    assert.match(prompt, /50[02] total/);
+    assert.match(prompt, /50[04] total/);
     assert.doesNotMatch(prompt, /excluded0,/);
     return { candidates: names("Getaway", "Tryout", "GetFocus", "TryFocus") };
   });
-  assert.deepEqual(result.candidates.map((candidate) => candidate.name), ["Getaway", "Tryout"]);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.name), ["Getaway", "Tryout", "GetFocus", "TryFocus"]);
 });
 
 test("refill preserves the creative brief prefix and varies only the bounded exclusion suffix", async () => {

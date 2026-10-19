@@ -1,23 +1,28 @@
-# Budgets, model routing and caching
+# Budgets, model roles and caching
 
-- Default creative model: `openai/gpt-6-luna`. **`/brand-settings`** (also `/brand settings`) selects a creative model for generation and an optional worker model for source-backed availability assessment. The worker defaults to **Same as creative**, preserving existing runs. `/brand model <provider/model-id>` and `/brand worker <provider/model-id|same>` provide command equivalents.
-- Settings are saved with **this project's naming run**, not global defaults. They never switch the main session model. Available choices use authenticated scoped models, or the available catalog when no scope is set. Unavailable models fail explicitly; there is no silent fallback.
-- Use a stronger creative model for name quality and a cheaper worker for bounded evidence interpretation, after checking its accuracy. UI navigation, filtering, deduplication, scoring, cache handling, storage and registry requests do not need a model. Naming does not add a second worker pass. Changing the worker retains the reserve; changing the creative model clears it. Cached findings are retained until explicit refresh.
-- Generation receives one compact brief, eight recent taste examples and a recent exclusion sample. The complete exclusion set stays local.
-- Each request processes at most 24 proposals. A batch allows at most two model requests, with one refill only when fewer than eight names survive.
-- Request timeout: 30 seconds. Entire generation timeout: 45 seconds. Output: at most 3,000 creative or 2,000 worker tokens per request (less if the selected model has a tighter output/context limit), low reasoning, no provider retries or browsing tools.
-- Up to 24 valid candidates enter the pool. Show 12 at a time and retain the rest, so **More** often needs no model call. A smaller remaining batch is shown rather than regenerating prematurely.
-- A changed direction, product, word/length constraint or model clears the reserve. Rejected batches stay excluded; cancelled batches return to the reserve.
-- No brand state is injected into unrelated agent turns. Generation commands and picker navigation run directly, not through queued main-agent prompts.
-- Each check batch contains at most three finalists or favorites and has a 45-second operation budget. **Check all favorites** runs cache-first deep checks in sequential batches of three. Searches within a batch run concurrently and one isolated model request interprets their bounded, source-linked excerpts. A decisive same-category/famous collision skips registry requests.
-- `/brand stats` reports generation time, calls, uncached input, cache reads, output and catalog-reported cost for the most recent 50 successful pools. Assessment costs and failed/aborted requests are not included in these generation-only metrics. Tool-driven operations also return their nested model usage to Pi. Direct command generation is tracked in app metrics, not assumed to appear in Pi's session totals.
+## Requests
 
-## Context isolation and prompt caching
+- The creative model generates names. Default: `openai/gpt-6-luna`.
+- An isolated **brief-editing** request uses the creative model to interpret feedback when the caller has not supplied an explicit targeted patch. It sees only the active brief and the original comment, not conversation history. It does not generate names or research. Explicit patches and document edits need no model request.
+- An optional worker model assesses retained availability evidence. Same as creative is the default. Models are selected in Settings or `/brand-settings`, scoped to this run. Unavailable models fail explicitly; the main Pi model never changes and no fallback is silently selected.
+- Generation sees the complete active product, Explore, Avoid, Style, explicit examples, and format constraints. It does not replay the feedback log or infer taste from the latest favorites. Directions and product descriptions are not silently clipped.
+- At most 24 proposals per naming request, at most two requests per pool. One refill is allowed only when fewer than eight names survive. Show 12 names at a time and retain the rest with their source pool and input key.
+- Naming requests time out at 30 seconds; the operation ceiling is 45 seconds. Brief interpretation has a 30-second deadline. Creative output is at most 3,000 tokens; brief editing and worker assessment at most 2,000. Smaller-context models may receive less output space or an explicit error.
+- Creative prompts have a 5,000-character ceiling; brief-editing and assessment prompts have 14,000. Oversized input fails with guidance rather than silently discarding constraints. Examples are explicit, at most 30. Feedback comments accept 1-6,000 characters.
+- No provider retries, browsing tools, synthetic warmup, or second naming-quality pass. Brief updates clear old reserves. Favoriting alone does not change the generation input, so remaining names are explicitly presented as belonging to the previous pool.
+- Default naming performs no availability research. `/brand screened` explicitly screens three new candidates before display; it may add up to 45 seconds per batch.
+- Availability checks process up to three saved favorites at a time, within a 45-second operation budget per batch. Explicit Check all favorites runs these batches sequentially. Within each batch searches are concurrent; one bounded isolated request interprets source-linked excerpts. Decisive collisions skip registry requests.
 
-Creative generation and worker assessment are separate, **single-turn** requests. Neither reads Pi's conversation or reuses the other's messages, tool results, system prompt, or model selection. Even when both roles use the same provider/model, each has a different stable cache-routing identity scoped to this project run, role, and model. This identity is not a stored conversation or a call to warm the cache.
+## Provenance and usage
 
-Both prompts keep instructions first and changing data last. Creative input includes a compact product/direction, at most eight taste examples, and 24 recent exclusions; full duplicate filtering remains local. Worker input includes the product and at most three source-linked excerpts per finalist, each trimmed to 400 characters; the full evidence stays in app storage for inspection. Worker assessments cannot cite an undisclosed excerpt. Concurrent search completion cannot reorder the finalist batch. Hard character budgets and a conservative model-context estimate reject oversized requests instead of silently overflowing or switching models.
+Each successful pool saves the creative system prompt, exact request prompts (including refills), effective brief with local exclusions, model, revision, and original candidates. Viewed rounds link to that pool and record whether names were newly generated, served from a reserve, or externally supplied. Historical unknown inputs are labeled unknown.
 
-Requests ask for short cache retention where supported. Cache hits depend on provider-specific thresholds and expiry; small prompts may not be cacheable. There is **no padding, replayed transcript, synthetic warmup, or guarantee of cache savings**. `/brand stats` shows provider-reported cache reads for generation, not a promise about future runs.
+`/brand stats` reports provider-reported generation usage, costs and elapsed time for the most recent 50 successful pools. It is not a total-spend ledger: brief editing, assessment, failed and aborted requests are excluded. Tool-driven operations return their nested model usage to Pi; direct command usage is not assumed to appear in Pi's totals.
 
-No elapsed-time or quality guarantee is implied by these limits. They are work ceilings; compare real runs with `/brand stats`.
+## Isolation and caching
+
+Creative generation, brief editing, and worker assessment are separate single-turn requests. Each gets a distinct cache-routing identity scoped to this project run, model, and role. Identity is not a stored conversation or an idle cache warmup.
+
+The creative prompt keeps stable instructions first and varying exclusions last. At most 24 recent exclusions appear in its sample; full duplicate enforcement remains local. Worker requests see only the product and bounded source-linked excerpts, not creative taste or the feedback record. Concurrent search completion does not reorder a batch.
+
+Short cache retention is requested where supported. Actual hits depend on provider thresholds and expiry; compact prompts may not be cacheable. There is no padding, transcript replay, synthetic warmup, or promised savings. `/brand stats` reports actual generation cache reads, not a latency or quality guarantee.
