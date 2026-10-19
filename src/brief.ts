@@ -21,7 +21,7 @@ export function validateNamingContent(content: NamingContent): void {
 export function formatBrief(content: NamingContent): string {
   return [
     "# Naming brief", "", "This is the source of truth for naming. Edit these sections to change the next generation.",
-    "Feedback history is reference only. Favorites are not implicit instructions; add taste examples here.",
+    "Feedback history is reference only. Favorites are additional positive taste examples; the brief takes priority.",
     "Format uses letters only (and spaces when multiple words are allowed). Keep the six section headings.", "",
     "## Product", content.product, "", "## Explore", content.direction, "", "## Avoid", content.avoid,
     "", "## Style", content.style, "", "## Examples", ...content.examples.map((name) => `- ${name}`),

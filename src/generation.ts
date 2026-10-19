@@ -7,6 +7,7 @@ export interface NamingBrief {
   avoid?: string;
   style?: string;
   examples: string[];
+  favorites?: string[];
   constraints: { singleWord: boolean; maxLength: number };
   excluded: string[];
 }
@@ -43,6 +44,7 @@ export function promptFor(brief: NamingBrief, excluded: Set<string>): string {
     brief.avoid ? `Avoid: ${brief.avoid}` : "",
     brief.style ? `Style: ${brief.style}` : "",
     exampleLine ? `Explicit taste examples; do not copy: ${exampleLine}` : "",
+    brief.favorites?.length ? `Favorite names are positive taste references, not permission to copy or override the brief: ${brief.favorites.join(", ")}` : "",
     // Put changing round data last so refills preserve the stable brief prefix.
     `Do not use excluded names (${excluded.size} total); recent sample: ${recent.join(", ") || "none"}.`,
   ].filter(Boolean).join("\n");

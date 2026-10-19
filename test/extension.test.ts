@@ -21,6 +21,7 @@ function harness() {
   process.env.PI_BRAND_CONFIG = path.join(root, "run.json");
   const tools = new Map<string, TestTool>();
   const events: string[] = [];
+  const eventHandlers = new Map<string, (event: unknown, ctx: ExtensionCommandContext) => unknown>();
   const messages: string[] = [];
   const notices: string[] = [];
   const choices: string[] = [];
@@ -37,7 +38,7 @@ function harness() {
     registerCommand: (name: string, definition: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => { commands.set(name, definition.handler); },
     sendUserMessage: (message: string) => messages.push(message),
     appendEntry: () => {},
-    on: (event: string) => events.push(event),
+    on: (event: string, handler: (event: unknown, ctx: ExtensionCommandContext) => unknown) => { events.push(event); eventHandlers.set(event, handler); },
   } as unknown as ExtensionAPI;
   const ctx = {
     cwd: project, mode: "rpc", hasUI: true, scopedModels: [],
@@ -75,11 +76,12 @@ function harness() {
         return { result: async () => ({ stopReason: "toolUse", usage, content: [{ type: "toolCall", name: "submit_result", id: "call", arguments: value }] }) };
       },
     },
-    sessionManager: { getBranch: () => { throw new Error("expensive main history must not be read"); } },
+    sessionManager: { getSessionId: () => "test-session", getBranch: () => { throw new Error("expensive main history must not be read"); } },
   } as unknown as ExtensionCommandContext;
   register(pi);
   return {
     ctx, events, tools, messages, notices, choices, inputs, dialogs, requestedModels, briefUpdates, requests, editors,
+    emit: (event: string) => eventHandlers.get(event)?.({ type: event }, ctx),
     command: (args: string) => commands.get("brand")!(args, ctx),
     settings: () => commands.get("brand-settings")!("", ctx),
     state: () => loadBrandState(project, true).state,
@@ -88,19 +90,330 @@ function harness() {
   };
 }
 
-test("commands generate in isolation, reuse reserves and never inject main context", async () => {
+function terminalScripts(ctx: ExtensionCommandContext, scripts: string[][]): string[][] {
+  const frames: string[][] = [];
+  Object.assign(ctx, { mode: "tui" });
+  Object.assign(ctx.ui, { custom: async (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
+    let result: unknown;
+    const component = factory({ requestRender() {} }, { fg: (_color: string, text: string) => text, bold: (text: string) => text }, {}, value => { result = value; });
+    const keys = scripts.shift();
+    assert.ok(keys, "unexpected extra screen");
+    frames.push(component.render(80));
+    for (const key of keys) { component.handleInput(key); frames.push(component.render(80)); }
+    assert.ok(result, "script did not finish the screen");
+    return result;
+  } });
+  return frames;
+}
+
+test("terminal bulk marks do not alter taste or block reserve reuse", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close");
+    await app.command("a todo app");
+    const scripts = [[" ", "g", "\r"], ["f", "\x1b"]];
+    terminalScripts(app.ctx, scripts);
+    await app.command("");
+    assert.equal(scripts.length, 0);
+    assert.equal(app.modelCalls(), 1);
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Merry"]);
+    assert.deepEqual(app.state().dismissed, []);
+    assert.equal(app.state().rounds.length, 2);
+    assert.equal(app.state().rounds.at(-1)?.origin, "reserve");
+  } finally { app.cleanup(); }
+});
+
+test("manually added names persist, receive focus and can be checked and favorited without a saved round", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const rounds = app.state().rounds;
+    app.inputs.push("  Handpicked  ");
+    terminalScripts(app.ctx, [["\t", "n"], ["\r", "c"]]);
+    await app.command("");
+    assert.ok(app.state().selected.includes("Handpicked"));
+    assert.deepEqual(app.state().liked, []);
+    assert.deepEqual(app.state().rounds, rounds);
+    assert.equal(app.state().availability.handpicked, undefined);
+    assert.equal(app.modelCalls(), 1);
+    assert.match(app.messages[0], /names \["Handpicked"\]/);
+    await app.tools.get("brand_check")!.execute("check", { names: ["Handpicked"], stage: "screen" } as never, undefined, undefined, researchContext(app.ctx, []));
+    assert.ok(app.state().availability.handpicked);
+    terminalScripts(app.ctx, [[" ", "f", "\x1b", "\x1b"]]);
+    await app.emit("agent_end");
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Handpicked"]);
+    assert.deepEqual(app.state().rounds, rounds);
+  } finally { app.cleanup(); }
+});
+
+test("manual duplicates reuse saved names and evidence; discarded names can be restored", async () => {
+  for (const restore of [false, true]) {
+    const app = harness();
+    try {
+      app.choices.push("[ ] Able", "Save and close"); await app.command("tasks");
+      if (restore) await app.command("dismiss Able");
+      const saved = loadBrandState(app.ctx.cwd, true);
+      saved.state.availability.able = { score: "good", reason: "Retained evidence", checkedAt: "2026-01-01", stage: "deep" };
+      saveBrandState(saved.path, saved.state);
+      app.inputs.push("  aBlE  ");
+      terminalScripts(app.ctx, [["N"], ["\r", "c"]]);
+      await app.command("");
+      assert.equal(app.state().selected.length, 12);
+      assert.deepEqual(app.state().dismissed, []);
+      assert.equal(app.state().rounds.length, 1);
+      assert.equal(app.state().liked.length, restore ? 0 : 1);
+      assert.equal(app.state().availability.able.reason, "Retained evidence");
+      assert.match(app.messages[0], /names \["Able"\]/);
+      assert.equal(app.modelCalls(), 1);
+    } finally { app.cleanup(); }
+  }
+});
+
+test("cancelled, empty and invalid manual names leave the list unchanged", async () => {
+  for (const input of [undefined, "   ", "x".repeat(61), "bad\u001b[31mname"]) {
+    const app = harness();
+    try {
+      app.choices.push("Save and close"); await app.command("tasks");
+      const before = app.state();
+      app.inputs.push(input);
+      const frames = terminalScripts(app.ctx, [["/", "a", "\r", "n"], ["\x1b", "\x1b"]]);
+      await app.command("");
+      assert.deepEqual(app.state(), before);
+      assert.deepEqual(app.messages, []);
+      assert.equal(app.modelCalls(), 1);
+      assert.ok(frames.some(frame => frame.some(line => line.startsWith("/ ") && line.includes("a"))));
+      if (input?.trim()) assert.ok(app.notices.some(notice => notice.includes("single-line name")));
+    } finally { app.cleanup(); }
+  }
+});
+
+test("terminal check shortcut dispatches immediately without a confirmation screen", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const scripts = [[" ", "\x1b[B", " ", "c"]];
+    terminalScripts(app.ctx, scripts);
+    await app.command("");
+    assert.equal(scripts.length, 0);
+    assert.equal(app.messages.length, 1);
+    assert.match(app.messages[0], /brand_check once.*\["Able","Bold"\].*batch true/);
+    assert.deepEqual(app.state().liked, []);
+  } finally { app.cleanup(); }
+});
+
+test("command-owned checks reopen the updated list with its filter, cursor and marks", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    terminalScripts(app.ctx, [["/", "a", "\r", "\x1b[B", " ", "c"]]);
+    await app.command("");
+    assert.match(app.messages[0], /names \["Calm"\]/);
+    const searches: string[] = [];
+    await app.tools.get("brand_check")!.execute("check", { names: ["Calm"], batch: true } as never, undefined, undefined, researchContext(app.ctx, searches));
+    const scripts = [[" ", "f", "\x1b", "\x1b"]];
+    const frames = terminalScripts(app.ctx, scripts);
+    await app.emit("agent_end");
+    assert.equal(scripts.length, 0);
+    assert.ok(frames[0]!.some(line => line.startsWith("/ ") && line.includes("a")));
+    assert.match(frames[0]!.find(line => line.includes("Calm"))!, new RegExp(`^ Calm\\s+[] ${app.state().availability.calm.score}`));
+    assert.ok(!frames[0]!.some(line => line.includes("Bold")));
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Calm"]);
+    assert.deepEqual(searches, ["Calm"]);
+    assert.equal(app.messages.length, 1);
+    await app.emit("agent_end"); // Closing the restored list must not reopen it again.
+  } finally { app.cleanup(); }
+});
+
+test("favorites checks return to Favorites rather than Names", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "[ ] Bold", "Save and close"); await app.command("tasks");
+    terminalScripts(app.ctx, [["\t", "\x1b[B", "c"]]); await app.command("");
+    await app.tools.get("brand_check")!.execute("check", { names: ["Able", "Bold"], batch: true } as never, undefined, undefined, researchContext(app.ctx, []));
+    const frames = terminalScripts(app.ctx, [["f", "\x1b"]]);
+    await app.emit("agent_end");
+    assert.match(frames[0]!.join("\n"), /\[ Favorites\]/);
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Able"]);
+  } finally { app.cleanup(); }
+});
+
+test("interrupted checks return without retrying; session changes and shutdown cancel restoration", async () => {
+  for (const outcome of ["interrupted", "session-changed", "shutdown"] as const) {
+    const app = harness();
+    try {
+      app.choices.push("Save and close"); await app.command("tasks");
+      terminalScripts(app.ctx, [["c"]]); await app.command("");
+      if (outcome === "interrupted") {
+        const ctx = { ...researchContext(app.ctx, []), signal: AbortSignal.abort(new Error("Check cancelled")) };
+        await assert.rejects(app.tools.get("brand_check")!.execute("check", { names: ["Able"] } as never, undefined, undefined, ctx), /Check cancelled/);
+      }
+      if (outcome === "session-changed") Object.assign(app.ctx.sessionManager, { getSessionId: () => "other-session" });
+      if (outcome === "shutdown") await app.emit("session_shutdown");
+      const scripts = outcome === "interrupted" ? [["\x1b"]] : [];
+      terminalScripts(app.ctx, scripts);
+      await app.emit("agent_end");
+      assert.equal(scripts.length, 0);
+      assert.equal(app.messages.length, 1);
+      assert.equal(app.modelCalls(), 1);
+      await app.emit("agent_end");
+    } finally { app.cleanup(); }
+  }
+});
+
+test("a standalone check command does not open a workspace on completion", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    terminalScripts(app.ctx, []);
+    await app.command("check Able");
+    await app.tools.get("brand_check")!.execute("check", { names: ["Able"], stage: "screen" } as never, undefined, undefined, researchContext(app.ctx, []));
+    await app.emit("agent_end");
+    assert.equal(app.messages.length, 1);
+  } finally { app.cleanup(); }
+});
+
+test("tool-driven checks stay in the workspace loop without dispatching another request", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const scripts = [["/", "Extra", "\r", "c"], ["\x1b", "\x1b"]];
+    const frames = terminalScripts(app.ctx, scripts);
+    const searches: string[] = [];
+    await app.tools.get("brand_pick")!.execute("pick", { candidates: [{ name: "Extra" }] } as never, undefined, undefined, researchContext(app.ctx, searches));
+    assert.equal(scripts.length, 0);
+    assert.deepEqual(app.messages, []);
+    assert.deepEqual(searches, ["Extra"]);
+    assert.match(frames.flat().join("\n"), /Extra\s+[]/);
+    await app.emit("agent_end");
+  } finally { app.cleanup(); }
+});
+
+test("terminal bulk discard removes selected and favorite names but preserves round history", async () => {
+  const app = harness();
+  try {
+    app.choices.push("[ ] Able", "Save and close");
+    await app.command("tasks");
+    Object.assign(app.ctx.ui, { confirm: async () => true });
+    const scripts = [[" ", "\x1b[B", " ", "d"], ["\x1b"]];
+    terminalScripts(app.ctx, scripts);
+    await app.command("");
+    assert.equal(scripts.length, 0);
+    assert.equal(app.state().selected.length, 10);
+    assert.deepEqual(app.state().liked, []);
+    assert.deepEqual(app.state().dismissed, ["Able", "Bold"]);
+    assert.equal(app.state().rounds[0].candidates.length, 12);
+  } finally { app.cleanup(); }
+});
+
+function researchContext(ctx: ExtensionCommandContext, searches: string[]): ExtensionToolContext {
+  return { ...ctx, tools: [{ name: "web_search" }], executeTool: async (_name: string, args: { queries: string[] }) => {
+    const name = args.queries[0].match(/^\"([^\"]+)\"/)![1];
+    searches.push(name);
+    return { isError: false, result: { content: [{ type: "text", text: JSON.stringify({ results: [{ url: `https://example.com/${name}`, snippet: "source-linked finding" }] }) }] } };
+  } } as unknown as ExtensionToolContext;
+}
+
+test("selected names can be batch checked without favoriting; unchecked-only skips existing assessments", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const saved = loadBrandState(app.ctx.cwd, true);
+    saved.state.availability.able = { score: "good", reason: "previous", stage: "deep", checkedAt: "2026-01-01" };
+    saveBrandState(saved.path, saved.state);
+    const searches: string[] = [];
+    const ctx = researchContext(app.ctx, searches);
+    const names = ["Able", "Bold", "Calm", "Daring", "Eager"];
+    const params = { names, batch: true, uncheckedOnly: true, stage: "screen" };
+    const tool = app.tools.get("brand_check")!;
+    await tool.execute("batch", params as never, undefined, undefined, ctx);
+    assert.deepEqual([...searches].sort(), names.slice(1).sort());
+    assert.deepEqual(app.state().liked, []);
+    assert.equal(app.state().selected.length, 12);
+    const resolved = app.state();
+    for (const name of names.slice(1)) {
+      resolved.availability[name.toLowerCase()] = { score: "good", reason: "resolved later", stage: "deep", checkedAt: "2026-01-02" };
+    }
+    saveBrandState(saved.path, resolved);
+    searches.length = 0;
+    const calls = app.modelCalls();
+    const done = await tool.execute("again", params as never, undefined, undefined, ctx);
+    assert.match(done.content[0].text, /No unchecked or unknown names/);
+    assert.deepEqual(searches, []);
+    assert.equal(app.modelCalls(), calls);
+    await app.command("worker openai/cheap-worker");
+    searches.length = 0;
+    await tool.execute("refresh", { ...params, refresh: true } as never, undefined, undefined, ctx);
+    assert.equal(searches.length, 5);
+    assert.ok(app.requestedModels.slice(-2).every(model => model === "openai/cheap-worker"));
+    for (const name of names) assert.equal(app.state().availability[name.toLowerCase()].model, "openai/cheap-worker");
+  } finally { app.cleanup(); }
+});
+
+test("unchecked-only retries inconclusive names without touching conclusive ones", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const saved = loadBrandState(app.ctx.cwd, true);
+    saved.state.availability.able = { score: "good", reason: "conclusive", stage: "deep", checkedAt: "2026-01-01" };
+    saved.state.availability.bold = { score: "unknown", reason: "search unavailable", stage: "deep", checkedAt: "2026-01-01", researchVersion: CHECK_RESEARCH_VERSION };
+    saveBrandState(saved.path, saved.state);
+    const searches: string[] = [];
+    const result = await app.tools.get("brand_check")!.execute("retry", { names: ["Able", "Bold"], batch: true, uncheckedOnly: true, stage: "deep" } as never, undefined, undefined, researchContext(app.ctx, searches));
+    assert.deepEqual(searches, ["Bold"]);
+    assert.match(result.content[0].text, /Bold/);
+    assert.doesNotMatch(result.content[0].text, /Able/);
+    assert.equal(app.state().availability.able.reason, "conclusive");
+    assert.notEqual(app.state().availability.bold.reason, "search unavailable");
+  } finally { app.cleanup(); }
+});
+
+test("failed forced reassessment retains the previous evidence and timestamp", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    const saved = loadBrandState(app.ctx.cwd, true);
+    saved.state.availability.able = { score: "good", reason: "previous", stage: "deep", checkedAt: "2026-01-01", model: "openai/old-worker" };
+    saveBrandState(saved.path, saved.state);
+    Object.assign(app.ctx.modelRegistry, { streamSimple: () => { throw new Error("Provider unavailable"); } });
+    const result = await app.tools.get("brand_check")!.execute("refresh", { names: ["Able"], refresh: true, stage: "screen" } as never, undefined, undefined, researchContext(app.ctx, []));
+    assert.match(result.content[0].text, /Refresh failed; previous assessment retained/);
+    assert.equal(app.state().availability.able.score, "good");
+    assert.equal(app.state().availability.able.checkedAt, "2026-01-01");
+    assert.equal(app.state().availability.able.model, "openai/old-worker");
+  } finally { app.cleanup(); }
+});
+
+test("terminal feedback returns to browsing instead of automatically generating", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close");
+    await app.command("a todo app");
+    const rounds = app.state().rounds.length;
+    app.inputs.push("Make it short and confident");
+    const scripts = [["b", "f"], ["\x1b"]];
+    terminalScripts(app.ctx, scripts);
+    await app.command("");
+    assert.equal(scripts.length, 0);
+    assert.equal(app.state().rounds.length, rounds);
+    assert.equal(app.requests.filter(request => request.role === "creative").length, 1);
+    assert.equal(app.requests.filter(request => request.role === "brief").length, 1);
+    assert.equal(app.state().brief.style, "short and confident");
+  } finally { app.cleanup(); }
+});
+
+test("commands generate in isolation, refresh favorite-led inputs and never inject main context", async () => {
   const app = harness();
   try {
     app.choices.push("[ ] Able", "Save and close");
     await app.command("a todo app");
     assert.equal(app.modelCalls(), 1);
     assert.equal(app.state().liked[0].name, "Able");
-    assert.equal(app.state().reserve.length, 12);
+    assert.equal(app.state().reserve.length, 0);
     app.choices.push("[ ] Merry", "Save and close");
     await app.command("more");
-    assert.equal(app.modelCalls(), 1);
+    assert.equal(app.modelCalls(), 2);
     assert.equal(app.state().liked.length, 2);
-    assert.equal(app.state().generationMetrics.length, 1);
+    assert.equal(app.state().generationMetrics.length, 2);
     assert.deepEqual(app.messages, []);
     assert.ok(!app.events.includes("before_agent_start"));
     assert.equal(app.ctx.model!.id, "gpt-6.1-sol");
@@ -228,7 +541,7 @@ test("owned cached checks need no web tool or model call and allow automatic com
     app.choices.push("[ ] Able", "Save and close");
     await app.command("tasks");
     await app.command("finalists Able");
-    await app.tools.get("brand_score")!.execute("record", { name: "Able", famousCollision: false } as never, undefined, undefined, app.ctx as unknown as ExtensionToolContext);
+    await app.tools.get("brand_score")!.execute("record", { name: "Able", famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: false } as never, undefined, undefined, app.ctx as unknown as ExtensionToolContext);
     const checkedAt = app.state().availability.able.checkedAt;
     const toolCtx = { ...app.ctx, tools: [], executeTool: () => { throw new Error("must not search"); } } as unknown as ExtensionToolContext;
     const result = await app.tools.get("brand_check")!.execute("check", {} as never, undefined, undefined, toolCtx);
@@ -239,7 +552,7 @@ test("owned cached checks need no web tool or model call and allow automatic com
   } finally { app.cleanup(); }
 });
 
-test("explicit screened mode checks only three names with one assessment and retains the reserve", async () => {
+test("explicit screened mode checks only three names; a new favorite invalidates the reserve", async () => {
   const app = harness();
   try {
     await app.command("note familiar words");
@@ -260,7 +573,7 @@ test("explicit screened mode checks only three names with one assessment and ret
     assert.equal(searches, 3);
     assert.equal(app.modelCalls(), 3);
     assert.equal(app.state().rounds[0].candidates.length, 3);
-    assert.equal(app.state().reserve.length, 21);
+    assert.equal(app.state().reserve.length, 0);
     assert.equal(app.state().availability.able.stage, "screen");
     assert.deepEqual(app.messages, []);
   } finally { app.cleanup(); }
@@ -286,13 +599,13 @@ test("closing saves explicit picks and never rewrites the viewed round", async (
     assert.deepEqual(app.state().liked.map(entry => entry.name), ["Able"]);
     assert.equal(app.state().rounds[0].candidates.length, 12);
     assert.deepEqual(app.state().dismissed, []);
-    assert.equal(app.state().reserve.length, 12);
+    assert.equal(app.state().reserve.length, 0);
     app.choices.push("More names", "Save and close");
     await app.command("");
-    assert.equal(app.modelCalls(), 1);
-    assert.equal(app.state().rounds[1].origin, "reserve");
+    assert.equal(app.modelCalls(), 2);
+    assert.equal(app.state().rounds[1].origin, "generated");
     assert.equal(app.state().rounds[0].candidates.length, 12);
-    assert.ok(app.dialogs.some(dialog => dialog.title.includes("no new generation")));
+    assert.ok(app.requests.at(-1)?.prompt.includes("positive taste references"));
   } finally { app.cleanup(); }
 });
 
@@ -418,7 +731,7 @@ test("failed interpretation retains the original feedback without changing the b
 test("models remain in settings; worker routing does not change creative input or main model", async () => {
   const app = harness();
   try {
-    app.choices.push("[ ] Able", "Save and close");
+    app.choices.push("Save and close");
     await app.command("tasks");
     app.choices.push("Worker (evidence assessment): same as creative", "openai/cheap-worker", "Save settings");
     await app.settings();

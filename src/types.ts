@@ -43,6 +43,7 @@ export interface AvailabilityRecord {
   warnings?: string[];
   /** A fingerprint of requirements, not a claim of timeless availability. */
   requirementsKey?: string;
+  model?: string;
 }
 
 export interface NamingContent {
@@ -103,11 +104,13 @@ export interface GenerationMetric {
 }
 
 export interface BrandState {
-  version: 3;
+  version: 4;
   product: string;
   updatedAt: string;
   rounds: BrandRound[];
   liked: LikedName[];
+  /** Active names; favorites are a subset. Historical rounds remain immutable. */
+  selected: string[];
   dismissed: string[];
   /** Historical notes are retained but no longer replayed into every prompt. */
   directionNotes: string[];
@@ -131,11 +134,12 @@ export interface BrandState {
 
 export function emptyBrandState(product = ""): BrandState {
   return {
-    version: 3,
+    version: 4,
     product,
     updatedAt: new Date().toISOString(),
     rounds: [],
     liked: [],
+    selected: [],
     dismissed: [],
     directionNotes: [],
     availability: {},

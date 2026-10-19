@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildAvailabilityPrompt, buildMorePrompt, buildNamingBrief } from "../src/prompt.ts";
 import { emptyBrandState } from "../src/types.ts";
 
-test("naming brief uses the canonical sections and explicit taste examples, not recent favorites", () => {
+test("naming brief uses canonical sections, explicit examples and all favorites", () => {
   const state = emptyBrandState("a keyboard todo app");
   state.brief.direction = "familiar confident words";
   state.brief.examples = ["TaskHQ", "Control room"];
@@ -13,6 +13,7 @@ test("naming brief uses the canonical sections and explicit taste examples, not 
   const brief = buildNamingBrief(state);
   assert.equal(brief.direction, "familiar confident words");
   assert.deepEqual(brief.examples, ["TaskHQ", "Control room"]);
+  assert.deepEqual(brief.favorites, state.liked.map(entry => entry.name));
   assert.equal(brief.avoid, "Synthetic syllables");
   assert.equal(brief.excluded.length, 30);
   assert.doesNotMatch(JSON.stringify(brief), /obsolete|accidental/);
@@ -29,7 +30,7 @@ test("check prompt names only finalists and delegates all bookkeeping", () => {
   assert.match(prompt, /After it returns, summarize completion.*without calling the tool again/);
   assert.doesNotMatch(prompt, /Favorite|brand_score|npm/);
   assert.match(buildAvailabilityPrompt(state, "screen", true), /stage screen, refresh true/);
-  assert.match(buildAvailabilityPrompt(state, "deep", true, ["Favorite"]), /names \["Favorite"\].*saved favorite/);
+  assert.match(buildAvailabilityPrompt(state, "deep", true, ["Favorite"]), /names \["Favorite"\].*saved name/);
   const allFavoritesPrompt = buildAvailabilityPrompt(state, "deep", false, undefined, true);
   assert.match(allFavoritesPrompt, /allFavorites true.*batches of up to three/);
   assert.match(allFavoritesPrompt, /After it returns, summarize completion.*without calling the tool again/);

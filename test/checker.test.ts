@@ -70,6 +70,36 @@ test("old deep unknowns are automatically rechecked once under new research rule
   assert.equal(shouldRefreshUnknown(state.availability.able, "deep"), false);
 });
 
+test("current and legacy unknowns are retried rather than treated as completed assessments", async () => {
+  for (const stage of ["deep", "legacy"] as const) {
+    const { state, calls, dependencies } = fixture();
+    state.finalists = ["Able"];
+    state.availability.able = { score: "unknown", reason: "inconclusive", checkedAt: "2026-01-01", stage, researchVersion: CHECK_RESEARCH_VERSION };
+    assert.equal(shouldRefreshUnknown(state.availability.able, "deep"), true);
+    const refreshed = await checkFinalists(state, "deep", dependencies);
+    assert.equal(calls.search, 1);
+    assert.equal(refreshed.records.able.score, "perfect");
+  }
+});
+
+test("an inconclusive screen without evidence retries search on the next check", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.finalists = ["Able"];
+  let offline = true;
+  const search = dependencies.search;
+  dependencies.search = async (name, signal) => {
+    if (offline) { offline = false; calls.search++; throw new Error("Search offline"); }
+    return search(name, signal);
+  };
+  state.availability = (await checkFinalists(state, "screen", dependencies)).records;
+  assert.equal(state.availability.able.score, "unknown");
+  assert.deepEqual(state.availability.able.evidence, []);
+  assert.equal(calls.search, 1);
+  const deep = await checkFinalists(state, "deep", dependencies);
+  assert.equal(calls.search, 2);
+  assert.equal(deep.records.able.score, "perfect");
+});
+
 test("screen upgrade reuses web evidence and avoids repeated search or classification", async () => {
   const { state, calls, dependencies } = fixture();
   state.finalists = ["Able"];

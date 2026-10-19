@@ -36,7 +36,7 @@ test("pools retain exact inputs and reserve provenance; changed examples invalid
   const pool = structuredClone(state.pools[0]);
   recordRound(state, { product: state.product, candidates: first, ...state.lastBatch });
   assert.equal(state.lastBatch?.origin, "generated");
-  state.liked.push({ name: "Able", likedAt: new Date().toISOString() });
+  state.selected.push("Able");
   await takeBatch(state, request);
   assert.equal(calls, 1);
   assert.equal(state.lastBatch?.origin, "reserve");

@@ -9,6 +9,7 @@ export function buildNamingBrief(state: BrandState): NamingBrief {
     avoid: state.brief.avoid,
     style: state.brief.style,
     examples: [...state.brief.examples],
+    favorites: [...new Map(state.liked.map(entry => [entry.name.normalize("NFKC").toLocaleLowerCase(), entry.name])).values()],
     constraints: { singleWord: state.brief.singleWord, maxLength: state.brief.maxLength },
     excluded: [...seenNames(state)],
   };
@@ -19,9 +20,10 @@ export function buildMorePrompt(_state: BrandState): string {
   return "Call brand_generate once for the current naming run. The tool owns generation, deduplication and the picker. Do not generate names or research independently.";
 }
 
-export function buildAvailabilityPrompt(state: BrandState, stage: "screen" | "deep" = "deep", refresh = false, names = state.finalists, allFavorites = false): string {
+export function buildAvailabilityPrompt(state: BrandState, stage: "screen" | "deep" = "deep", refresh = false, names = state.finalists, allFavorites = false, options: { batch?: boolean; uncheckedOnly?: boolean } = {}): string {
   if (allFavorites) return `Call brand_check once with stage ${stage}, refresh ${refresh}, and allFavorites true to check every saved favorite in batches of up to three. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
   if (names.length === 0) return "Save some favorites with /brand first, then choose names to check from Review favorites.";
-  const target = names.length === 1 ? "saved favorite" : "saved favorites";
-  return `Call brand_check once with stage ${stage}, refresh ${refresh}, and names ${JSON.stringify(names)} for these ${target}. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
+  const target = names.length === 1 ? "saved name" : "saved names";
+  const batch = options.batch ? `, batch true, uncheckedOnly ${!!options.uncheckedOnly}` : "";
+  return `Call brand_check once with stage ${stage}, refresh ${refresh}, and names ${JSON.stringify(names)}${batch} for these ${target}. The tool owns cache lookup, bounded research and persistence. Do not do independent checks or re-research cached names. After it returns, summarize completion and key outcomes without calling the tool again.`;
 }

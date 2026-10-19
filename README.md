@@ -1,6 +1,6 @@
 # pi-brand
 
-Name your product inside the [pi coding agent](https://pi.dev). Keep a visible naming brief, explore names in a keyboard picker, refine with feedback, and check the favorites worth pursuing.
+Name your product inside the [pi coding agent](https://pi.dev). Explore names in a keyboard workspace, refine an editable brief with feedback, and check the favorites worth pursuing.
 
 **[Try it in your browser](https://pi-brand.soleone.xyz)**: real pi with scripted names and sample research. No API key; nothing leaves the page.
 
@@ -17,14 +17,14 @@ Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability che
 ## The everyday loop
 
 1. `/brand <what the product does>` generates names from your saved brief.
-2. **Space** saves a selection as a favorite. **Enter or Esc** saves your selections and closes. Highlighting or filtering never implies a pick.
-3. Three next steps in the picker:
-   - **1 More names**: show the rest of the current pool, or generate another.
-   - **2 Give feedback**: explain what should change. See the brief changes, then get names from the revised brief.
-   - **3 Review favorites**: browse saved names and check the ones you select. No finalist promotion required.
-4. `/brand` resumes the workspace without generating. **Brief / Details** holds the editable documents, saved generation inputs, settings, and diagnostics.
+2. Generated names join the active list as **Selected**. **Space** marks rows for bulk actions; **a** marks all filtered rows. **f** toggles Favorite on the highlighted or marked names. **Enter** opens details.
+3. **Tab or ←/→** switches **Names / Favorites / History**. Navigation never starts model work. **/** searches names.
+4. **g** prepares generation: see whether the next batch uses the reserve or a new model call, then explicitly start with Enter.
+5. **n** adds your own name to the list and focuses it. **Enter**, then **c**, checks just that name. Adding alone does no research or favoriting.
+6. **b** reveals the otherwise hidden brief. **e** edits it; **f** gives AI-interpreted feedback. Feedback returns to browsing, not automatic generation.
+6. `/brand` resumes without generating. Name details expose evidence, direct check actions and similar-name refinement. Check shortcuts start immediately; no finalist promotion is needed.
 
-Unselected names are *seen*, not disliked. Closing never deletes or rewrites a round. Previously shown names remain available in History for later selection. **More like a name**, under batch details (`?`) or a favorite, adds a taste reference without silently favoriting it.
+**New → Selected → Favorite** is the naming lifecycle; bulk checkboxes are separate. New is transient during generation, Selected means membership in the active list, and Favorite is a starred active name. **d** discards highlighted/marked names after confirmation. Discarded names leave the active list but remain in History and duplicate exclusions. Closing never deletes or rewrites a round. **More like this** (`m` in name details) prepares a brief refinement without silently favoriting the reference.
 
 ## Your brief and feedback
 
@@ -35,22 +35,24 @@ Feedback makes targeted changes instead of replacing the entire direction. For e
 - `/brand feedback <comment>` updates the brief without generating.
 - `/brand pivot <comment>` updates it, then generates.
 - `/brand history` opens the editable feedback document. Annotate or correct the record there; edit the **brief** to change what applies now.
-- Favorites are saved choices, not hidden prompt instructions. Explicit examples in the brief determine taste references.
+- Favorites are positive taste examples alongside explicit brief examples. The brief takes priority. Other selected names and discarded history are not taste instructions.
 - Single-word format means one token, not dictionary-only. Compounds and abbreviations such as TaskHQ are allowed unless your brief excludes them. Names use letters, plus spaces when multiple words are enabled.
 
 Historical notes are preserved but not blindly replayed. Imported notes are labeled with unknown original author/date rather than attributed to you. Invalid documents fail with an error; they are never silently replaced.
 
 ## No mystery rounds
 
-Each generated pool retains its brief revision, effective inputs, explicit examples, model, system prompt, exact request prompts (including a refill), and original candidates. `/brand round [id]` or **Why these names?** inspects them. Old rounds without recorded inputs say so instead of inventing provenance.
+Each generated pool retains its brief revision, effective inputs, explicit examples, model, system prompt, exact request prompts (including a refill), and original candidates. `/brand round [id]` or **b → i** inspects them. Old rounds without recorded inputs say so instead of inventing provenance.
 
-The picker distinguishes **new generation** from **remaining names from a previous pool**. Brief or creative-model changes invalidate old reserves. Generating uses single-turn isolated requests, not your main conversation. Inspection only brings the requested context into chat.
+The generation preparation screen distinguishes **new generation** from **remaining names from a previous pool**. Brief, favorite or creative-model changes invalidate old reserves. Generating uses single-turn isolated requests, not your main conversation. Inspection only brings the requested context into chat.
 
 Default naming does **no availability research**. See [budgets and caching](docs/budgets-and-caching.md) for request limits, costs, and the optional screened mode.
 
-## Check favorites when ready
+## Check names when ready
 
-**Review favorites → Check selected favorites** checks up to three names. Selecting one favorite also offers **Check availability**. **Check all favorites** explicitly checks the list in batches. Cached findings are reused; refresh and quick-screen controls live under each favorite’s Details.
+**c Check pending** immediately checks every unassessed or inconclusive (**unknown**) name in the current filtered list, so an inconclusive result is not stuck. With bulk marks, it checks marked names instead, reusing conclusive assessments and retrying unknowns. **Shift+C Recheck all** forces fresh checks of the list, or marked names, with the current worker model. There is no extra confirmation screen; progress appears while checks run in batches of three. The list returns automatically with updated results, preserving your tab, filter, cursor and marks. Checking never promotes names to favorites.
+
+Name details also expose individual checks, refresh and quick screen. `/brand check <name>, <name>` checks up to three saved names; `/brand check all` checks pending active names (unassessed or unknown); `/brand check all refresh` rechecks the active list. Failed refreshes retain previous assessments.
 
 Results use `perfect / good / decent / bad / terrible`, or **unknown** when evidence is incomplete. They retain reasons, URLs, excerpts, and timestamps. `/brand evidence <name>` shows them. These are preliminary collision findings, **not trademark clearance**. A registry “no record found” is not a promise that a domain is registrable or affordable.
 
@@ -81,14 +83,16 @@ The workspace covers normal use. Command equivalents:
 /brand brief [edit]      inspect/edit the naming document
 /brand history           inspect/annotate feedback history
 /brand round [id]        inspect actual saved generation inputs
-/brand check [names]     select/check saved favorites
+/brand check [names]     select/check saved names
+/brand check all         check pending active names (unassessed or unknown)
+/brand check all refresh recheck all active names
 /brand evidence <name>   read retained findings
 /brand settings          choose creative and optional worker models
 /brand stats             document paths and generation metrics
 /brand help              advanced commands and compatibility aliases
 ```
 
-Separate multiple names with commas. Models, domain suffixes, and optional npm/GitHub checks live under **Brief / Details → Settings**. These settings never change your main session model. Existing `note`, `finalists`, word/length controls, quick screens, and manual keep/dismiss commands remain compatible; finalist selection is optional, not the main flow.
+Separate multiple names with commas. Models, domain suffixes, and optional npm/GitHub checks live under **b → s (Settings)**. These settings never change your main session model. Existing `note`, `finalists`, word/length controls, quick screens, and manual keep/dismiss commands remain compatible; finalist selection is optional, not the main flow.
 
 Chat tools are `brand_context`, `brand_feedback`, `brand_generate`, and `brand_check`. Compatibility tools `brand_pick`, `brand_score`, and `brand_seen` remain callable through codemode rather than cluttering the main tool list.
 

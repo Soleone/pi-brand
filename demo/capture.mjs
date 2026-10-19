@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Records the browser demo (demo/browser) as the README loop, and the hero:
-// names for the sample app, a few picked as favorites, three selected and checked. The hero is the favorites picker.
+// names for the sample app, three saved as favorites, then explicitly checked. The hero is the name table.
 // Usage: npm run media:capture. Needs agent-browser (with its browser installed) and FFmpeg on the PATH.
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -54,22 +54,14 @@ try {
       const focus = () => page.run("eval", "document.querySelector('.xterm-helper-textarea').focus()");
       await page.sleep(1200);
       await page.run("eval", click("/brand a reminder app that tells you when to water each plant"));
-      await page.waitFor(shows("Pick favorites"), { timeoutMs: 20_000 });
+      await page.waitFor(shows("ASSESSMENT"), { timeoutMs: 20_000 });
       await focus();
       await page.sleep(1500);
-      // Space picks a name and moves down: Sprig, Sipling, Thirsty, Greenhour.
-      await keys("Space", "Space", "ArrowDown", "Space", "ArrowDown", "ArrowDown", "ArrowDown", "Space");
+      // Favorite and bulk-mark Sprig, Sipling, Thirsty, without changing their stages by marking.
+      await keys("f", "Space", "ArrowDown", "f", "Space", "ArrowDown", "ArrowDown", "f", "Space");
       await page.run("screenshot", heroShot);
       await page.sleep(1000);
-      await keys("3");
-      await page.waitFor(shows("Review favorites"), { timeoutMs: 10_000 });
-      await page.sleep(1000);
-      await keys("Enter");
-      await page.waitFor(shows("Select up to 3 names to check"), { timeoutMs: 10_000 });
-      await page.sleep(1000);
-      await keys("Space", "Space", "Space");
-      await page.sleep(600);
-      await keys("Enter");
+      await keys("c");
       await page.waitFor(shows("comes out best"), { timeoutMs: 60_000 });
       await page.sleep(4000);
     },

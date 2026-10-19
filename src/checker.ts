@@ -25,7 +25,11 @@ export function buildCollisionSearchQueries(name: string, product: string): stri
 }
 
 export function shouldRefreshUnknown(record: AvailabilityRecord | undefined, stage: "screen" | "deep"): boolean {
-  return stage === "deep" && !!record && record.stage !== "legacy" && record.score === "unknown" && record.researchVersion !== CHECK_RESEARCH_VERSION;
+  if (!record || record.score !== "unknown") return false;
+  // A current screen with usable evidence can serve the deeper assessment without searching again.
+  if (stage === "deep" && record.stage === "screen" && record.researchVersion === CHECK_RESEARCH_VERSION
+    && record.evidence?.some(entry => entry.source === "web")) return false;
+  return true;
 }
 
 function normalizedEvidenceText(value: string): string {
@@ -254,7 +258,7 @@ export async function checkFinalists(
           : assessment && supported ? `${assessment.reason} (${verdict.reason})` : item.previous?.reason ?? verdict.reason,
         signals, checkedAt: new Date().toISOString(), stage, researchVersion: CHECK_RESEARCH_VERSION,
         evidence: item.evidence.slice(0, 20), warnings: item.warnings,
-        requirementsKey: key,
+        requirementsKey: key, model: item.previous ? item.previous.model : state.workerModel ?? state.model,
       };
     }));
     if (controller.signal.aborted) throw controller.signal.reason;

@@ -71,6 +71,7 @@ function agentReply(messages: Message[]): Step {
         refresh: /refresh true/.test(prompt),
         ...(names ? { names: JSON.parse(names) } : {}),
         ...(/allFavorites true/.test(prompt) ? { allFavorites: true } : {}),
+        ...(/batch true/.test(prompt) ? { batch: true, uncheckedOnly: /uncheckedOnly true/.test(prompt) } : {}),
       })], toolUse);
     }
     // The tool result lists "Name: score (reason)" per line; point at the best one.

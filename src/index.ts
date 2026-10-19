@@ -11,10 +11,11 @@ import { pickNames } from "./picker.ts";
 import { selectBrandModels, validateBrandModel } from "./model-settings.ts";
 import { generationStats } from "./overview.ts";
 import { chooseWorkspaceAction, roundDetails } from "./workspace.ts";
+import type { WorkspacePosition } from "./workspace-ui.ts";
 import { selectBrandOption } from "./selection.ts";
 import { buildAvailabilityPrompt } from "./prompt.ts";
 import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
-import { brandDocumentPaths, saveFeedbackDocument, addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, recordAvailability, recordRound, saveBrandState, setFinalists } from "./store.ts";
+import { brandDocumentPaths, saveFeedbackDocument, addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, activeNames, removeLikes, selectNames, recordAvailability, recordRound, saveBrandState, setFinalists } from "./store.ts";
 import { type AvailabilityRecord, type BrandState, type Candidate, type FeedbackEntry, type NamingContent } from "./types.ts";
 
 const CANDIDATE_SCHEMA = Type.Object({ name: Type.String({ maxLength: 60 }), flavor: Type.Optional(Type.String({ maxLength: 120 })), style: Type.Optional(Type.String({ maxLength: 60 })) });
@@ -25,7 +26,9 @@ const SIGNALS_SCHEMA = {
 const CHECK_OPTIONS = Type.Object({
   stage: Type.Optional(Type.Union([Type.Literal("screen"), Type.Literal("deep")])),
   refresh: Type.Optional(Type.Boolean()),
-  names: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 60 }), { minItems: 1, maxItems: 3 })),
+  names: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 60 }), { minItems: 1, maxItems: 1000 })),
+  batch: Type.Optional(Type.Boolean()),
+  uncheckedOnly: Type.Optional(Type.Boolean()),
   allFavorites: Type.Optional(Type.Boolean()),
 });
 
@@ -139,19 +142,27 @@ function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckD
   };
 }
 
-async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", refresh = false, names?: string[], allFavorites = false) {
+async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", refresh = false, names?: string[], allFavorites = false, options: { batch?: boolean; uncheckedOnly?: boolean } = {}) {
   const run = load(ctx);
   let targets: string[];
   if (allFavorites) {
     if (names !== undefined) throw new Error("Choose either specific names or all favorites, not both.");
     targets = [...new Map(run.state.liked.map((entry) => [availabilityKey(entry.name), entry.name])).values()];
   } else if (names !== undefined) {
-    const favorites = new Map(run.state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));
-    targets = [...new Set(names.map((name) => favorites.get(availabilityKey(name))).filter((name): name is string => !!name))];
-    if (targets.length !== new Set(names.map(availabilityKey)).size) throw new Error("Checks can only target saved favorites.");
+    const saved = new Map([...run.state.rounds.flatMap(round => round.candidates), ...activeNames(run.state), ...run.state.liked].map(entry => [availabilityKey(entry.name), entry.name]));
+    targets = [...new Set(names.map(name => saved.get(availabilityKey(name))).filter((name): name is string => !!name))];
+    if (targets.length !== new Set(names.map(availabilityKey)).size) throw new Error("Checks can only target saved names.");
   } else targets = run.state.finalists.length ? run.state.finalists : run.state.liked.map((entry) => entry.name);
-  if (targets.length === 0) throw new Error("Save some favorites first.");
-  if (!allFavorites && targets.length > 3) throw new Error("Choose up to three favorites from Review favorites, or explicitly request allFavorites.");
+  if (targets.length === 0) throw new Error("Save some names first.");
+  if (!allFavorites && !options.batch && targets.length > 3) throw new Error("Choose up to three names, or explicitly request batch true.");
+  if (options.uncheckedOnly && !refresh) {
+    const known = new Map([...run.state.rounds.flatMap(round => round.candidates), ...run.state.liked].map(entry => [availabilityKey(entry.name), entry]));
+    targets = targets.filter(name => {
+      const score = getAvailability(run.state, name)?.score ?? known.get(availabilityKey(name))?.score;
+      return !score || score === "unknown";
+    });
+  }
+  if (!targets.length) return textResult("No unchecked or unknown names in this selection.", { records: {}, cached: [] }, undefined, false);
 
   const records: Record<string, AvailabilityRecord> = Object.create(null);
   const cached: string[] = [];
@@ -160,9 +171,7 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
   for (let offset = 0; offset < targets.length; offset += 3) {
     const batch = targets.slice(offset, offset + 3);
     const checkState = { ...run.state, finalists: batch };
-    ctx.ui.setStatus?.("brand", allFavorites
-      ? `Checking favorites ${offset + 1}-${offset + batch.length} of ${targets.length} (${stage}, batch ${Math.floor(offset / 3) + 1}/${batchCount})...`
-      : `Checking ${batch.length} ${names === undefined ? "finalist" : "favorite"}${batch.length === 1 ? "" : "s"} (${stage}, 45s maximum)...`);
+    ctx.ui.setStatus?.("brand", `Checking names ${offset + 1}-${offset + batch.length} of ${targets.length} (${stage}, batch ${Math.floor(offset / 3) + 1}/${batchCount})...`);
     const result = await checkFinalists(checkState, stage, checkDependencies(ctx, checkState), { refresh, signal: ctx.signal })
       .finally(() => ctx.ui.setStatus?.("brand", undefined));
     await mutate(ctx, (state) => {
@@ -170,6 +179,11 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
         if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
         // Another writer may have completed this name while this operation was awaiting I/O.
         const hit = getAvailability(state, name);
+        // A failed forced refresh must not replace a conclusive result. Retrying an unknown may still add evidence.
+        if (hit && hit.score !== "unknown" && refresh && record.score === "unknown" && record.warnings?.some(warning => /unavailable|failed/i.test(warning))) {
+          result.records[name] = { ...hit, reason: `${hit.reason}. Refresh failed; previous assessment retained.` };
+          continue;
+        }
         if (hit && !refresh && hit.stage !== "screen" && !shouldRefreshUnknown(hit, stage)) continue;
         recordAvailability(state, name, record);
       }
@@ -186,8 +200,8 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
       : "";
     return `${name}: ${record.score} (${record.reason}${diagnostics})${isCached ? " [cached]" : ""}`;
   });
-  const summary = allFavorites
-    ? `${targets.length} favorites checked (${stage}, cache first; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen Review favorites to see every status.` : ""}`
+  const summary = allFavorites || options.batch
+    ? `${targets.length} ${allFavorites ? "favorites" : "names"} checked (${stage}, ${refresh ? "refreshed" : "cache first"}; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen the workspace to see every status.` : ""}`
     : summaries.join("\n");
   ctx.ui.notify(`${summary}\nSources: /brand evidence <name>. These findings are not legal clearance.`, "info");
   return textResult(summary, { records, cached }, usage, false);
@@ -196,6 +210,7 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
 export default function registerPiBrand(pi: ExtensionAPI): void {
   const active = new Set<AbortController>();
   let busy = false;
+  let resumeWorkspace: { sessionId: string; position: WorkspacePosition } | undefined;
 
   async function generateWithProgress(ctx: ExtensionContext, state: BrandState): Promise<Candidate[]> {
     const controller = new AbortController();
@@ -228,35 +243,70 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     ctx.ui.notify("Brand models saved. Main model unchanged; cached checks retained.", "info");
   }
 
-  async function runWorkspace(ctx: ExtensionContext, initial?: Candidate[], screenedCtx?: ExtensionToolContext, overviewFirst = false) {
+  async function runWorkspace(ctx: ExtensionContext, initial?: Candidate[], screenedCtx?: ExtensionToolContext, overviewFirst = false, resumePosition?: WorkspacePosition) {
     if (busy) throw new Error("A naming workspace is already open. Finish it first.");
     busy = true;
     let usage: Usage | undefined;
     let overview = overviewFirst;
     let favoritesFirst = false;
     let supplied = initial;
+    const position: WorkspacePosition = resumePosition ?? { tab: "names", cursor: 0 };
+    const workspacePicks = new Set<string>();
+    const checkCtx = screenedCtx ?? ("executeTool" in ctx ? ctx as ExtensionToolContext : undefined);
     try {
       while (true) {
         if (overview) {
           const run = load(ctx);
-          const action = await chooseWorkspaceAction(ctx, run.state, run.path, favoritesFirst);
+          const action = await chooseWorkspaceAction(ctx, run.state, run.path, favoritesFirst, position);
           favoritesFirst = false;
-          if (!action) return textResult("Naming workspace closed.", { picked: [] as string[] }, usage);
+          const favoriteChanges = action?.favoriteChanges ?? [];
+          if (favoriteChanges.length) await mutate(ctx, state => {
+            for (const change of favoriteChanges) {
+              if (!change.liked) {
+                removeLikes(state, [change.name]);
+                workspacePicks.delete(change.name);
+              } else {
+                const round = state.rounds.find(entry => entry.id === change.roundId);
+                const candidates = round?.candidates ?? activeNames(state);
+                const picked = candidates.filter(entry => availabilityKey(entry.name) === availabilityKey(change.name));
+                if (picked.length) {
+                  addLikes(state, round, picked);
+                  workspacePicks.add(change.name);
+                }
+              }
+            }
+          });
+          if (!action || action.kind === "close") return textResult("Naming workspace closed. Favorite changes saved.", { picked: [...workspacePicks] }, usage);
+          if (action.kind === "stay") continue;
           try {
+            if (action.kind === "add") {
+              const name = (await ctx.ui.input("Add a name", "Name only, up to 60 characters"))?.trim();
+              if (!name) continue;
+              if (name.length > 60 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) throw new Error("Use a single-line name of up to 60 characters, without control characters.");
+              await mutate(ctx, state => selectNames(state, [name]));
+              position.tab = "names";
+              position.roundId = undefined;
+              position.query = "";
+              position.marked = [];
+              position.focusName = name;
+              continue;
+            }
             if (action.kind === "check") {
-              if (screenedCtx) {
-                const result = await runCheck(screenedCtx, action.stage, action.refresh, action.names, action.allFavorites);
+              if (checkCtx) {
+                const result = await runCheck(checkCtx, action.stage, action.refresh, action.names, action.allFavorites, action);
                 usage = addUsage(usage, result.usage);
                 continue;
               }
-              pi.sendUserMessage(buildAvailabilityPrompt(run.state, action.stage, action.refresh, action.names, action.allFavorites), { deliverAs: "followUp" });
-              return textResult("Checking selected favorites.", { picked: [] as string[] }, usage);
+              pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state, action.stage, action.refresh, action.names, action.allFavorites, action), { deliverAs: "followUp" });
+              if (ctx.mode === "tui") resumeWorkspace = { sessionId: ctx.sessionManager.getSessionId(), position };
+              return textResult("Checking saved names.", { picked: [...workspacePicks] }, usage);
             }
             if (action.kind === "feedback" || action.kind === "similar") {
               const text = action.kind === "similar" ? 'More like "' + action.name + '" in meaning and feel. Keep unrelated instructions.' : await ctx.ui.editor("What should change? Unrelated brief sections will be kept.", "");
               if (!text?.trim()) continue;
               const result = await updateFeedback(ctx, text, action.kind === "similar" ? "similar" : "picker");
               usage = addUsage(usage, result.usage);
+              if (ctx.mode === "tui") continue;
               overview = false;
             } else if (action.kind === "brief") {
               const changes = parseBrief(action.markdown);
@@ -272,6 +322,13 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
               continue;
             } else if (action.kind === "models") { await openModelSettings(ctx); continue; }
             else if (action.kind === "setting") { await mutate(ctx, state => updateBrief(state, action.field, action.value)); continue; }
+            else if (action.kind === "discard") {
+              if (await ctx.ui.confirm(`Discard ${action.names.length} ${action.names.length === 1 ? "name" : "names"}?`, `${action.names.slice(0, 8).join(", ")}${action.names.length > 8 ? ", …" : ""}\nRemoves active selections and favorites. Saved rounds and evidence remain in History.`)) {
+                await mutate(ctx, state => dismissNames(state, action.names));
+                for (const name of action.names) workspacePicks.delete(name);
+              }
+              continue;
+            } else if (action.kind === "select") { await mutate(ctx, state => selectNames(state, action.names)); continue; }
             else if (action.kind === "dismiss") {
               if (await ctx.ui.confirm('Remove ' + action.name + '?', "Removes the favorite and prevents future suggestions. Saved round history stays intact.")) await mutate(ctx, state => dismissNames(state, [action.name]));
               favoritesFirst = true;
@@ -326,6 +383,15 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           return { run, round, candidates };
         });
         const { run, round, candidates } = prepared;
+        if (ctx.mode === "tui" && ctx.hasUI) {
+          position.tab = "names";
+          position.cursor = 0;
+          position.roundId = undefined;
+          position.query = "";
+          position.marked = [];
+          overview = true;
+          continue;
+        }
         const origin = round.origin === "reserve" ? "Remaining names from the previous pool; no new generation." : round.origin === "external" ? "Externally supplied names; original generation prompt unknown." : 'Generated from brief r' + round.briefRevision + '.';
         if (!ctx.hasUI) return textResult(origin + "\n" + candidates.map(entry => entry.name).join(", ") + "\nUse /brand keep <names> to save favorites; /brand round inspects the inputs.", { roundId: round.id, picked: [] as string[] }, usage);
         const outcome = await pickNames(ctx, candidates, { title: "Pick favorites", origin, context: 'Explore: ' + (run.state.brief.direction || "Open exploration") });
@@ -397,12 +463,12 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         const text = JSON.stringify({ round, pool: pool ?? "Legacy round: generation inputs were not recorded." }, null, 2);
         return textResult(text.length > 30000 ? `${text.slice(0, 30000)}\n[Truncated. Full saved inputs: ${run.path}]` : text, { round, pool }, undefined, false);
       }
-      return textResult(`Brief r${run.state.briefRevision}\n${formatBrief(namingContent(run.state))}\nBrief: ${documents.brief}\nFeedback: ${documents.feedback}`, { revision: run.state.briefRevision, documents }, undefined, false);
+      return textResult(`Brief r${run.state.briefRevision}\n${formatBrief(namingContent(run.state))}\nFavorite taste references: ${run.state.liked.map(entry => entry.name).join(", ") || "none"}\nBrief: ${documents.brief}\nFeedback: ${documents.feedback}`, { revision: run.state.briefRevision, favorites: run.state.liked.map(entry => entry.name), selected: run.state.selected, documents }, undefined, false);
     },
   });
   pi.registerTool({
     name: "brand_feedback", label: "Update naming brief", executionMode: "sequential",
-    promptGuidelines: ["For naming feedback: inspect brand_context, then pass the user's original words to brand_feedback with a targeted interpretation. Preserve unrelated instructions. Explain the returned brief changes before generating again. Favorites are saved choices, not implicit new instructions."],
+    promptGuidelines: ["For naming feedback: inspect brand_context, then pass the user's original words to brand_feedback with a targeted interpretation. Preserve unrelated instructions. Explain the returned brief changes before generating again. Favorites already provide positive taste examples; update the brief for other rules."],
     description: "Save the user's original feedback and apply a targeted update to the naming brief. Read brand_context first. Preserve unrelated instructions. Optional changes are your explicit interpretation of the original feedback; otherwise an isolated brief editor interprets it. Returns the actual changes; does not generate names.",
     parameters: Type.Object({ feedback: Type.String({ minLength: 1, maxLength: 6000 }), changes: Type.Optional(BRIEF_CHANGES) }),
     async execute(_id, params, _signal, _update, ctx) {
@@ -412,9 +478,9 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
   });
   pi.registerTool({
     name: "brand_check", label: "Check names", executionMode: "sequential",
-    description: "Check up to three saved favorites by name, or explicitly check all favorites in batches. Finalist promotion is not required. Reuses retained evidence by default; refresh is for explicit rechecks.",
+    description: "Check saved names without favoriting them. Up to three by default; batch true checks a named selection in batches of three. uncheckedOnly skips conclusive assessments but retries unknowns; refresh true explicitly rechecks with the current worker model. allFavorites checks saved favorites.",
     parameters: CHECK_OPTIONS,
-    async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh, params.names, params.allFavorites); },
+    async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh, params.names, params.allFavorites, params); },
   });
   pi.registerTool({
     name: "brand_pick", label: "Pick names", executionMode: "sequential", exposure: "codemode",
@@ -522,10 +588,16 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         }
         if (command === "evidence") { showRecord(ctx, tail, getAvailability(run.state, tail)); return; }
         if (command === "check" || command === "screen") {
+          if (tail === "all" || tail === "all refresh") {
+            const names = activeNames(run.state).map(entry => entry.name);
+            if (!names.length) throw new Error("No active names to check.");
+            pi.sendUserMessage(buildAvailabilityPrompt(run.state, command === "screen" ? "screen" : "deep", tail === "all refresh", names, false, { batch: true, uncheckedOnly: tail === "all" }));
+            return;
+          }
           let names = tail && tail !== "refresh" ? namesFrom(tail, run.state) : run.state.finalists;
           if (!names.length) {
-            if (!ctx.hasUI) throw new Error("Specify up to three saved favorites: /brand check <name>, <name>.");
-            const result = await pickNames(ctx, [...run.state.liked].reverse(), { title: "Select up to 3 favorites to check", selectionOnly: true, maxSelection: 3 });
+            if (!ctx.hasUI) throw new Error("Specify saved names: /brand check <name>, <name>.");
+            const result = await pickNames(ctx, activeNames(run.state), { title: "Select up to 3 names to check", selectionOnly: true, maxSelection: 3 });
             if (result?.kind !== "picked" || !result.names.length) return;
             names = result.names;
           }
@@ -548,7 +620,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         if (command === "dismiss" || command === "drop") {
           if (!tail) throw new Error("Usage: /brand dismiss <name>, <name>");
           await mutate(ctx, (state) => dismissNames(state, namesFrom(tail, state)));
-          ctx.ui.notify("Names dismissed from favorites and finalists. History and cached checks are retained.", "info"); return;
+          ctx.ui.notify("Names discarded from the active list and favorites. History and cached checks are retained.", "info"); return;
         }
         if (command === "excluded") { ctx.ui.notify(`${excludedNames(run.state).seen.size} seen/excluded names:\n${[...excludedNames(run.state).seen].sort().join(", ")}`, "info"); return; }
         if (command === "history") {
@@ -563,7 +635,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         if (command === "clear") {
           if (!ctx.hasUI || !await ctx.ui.confirm("Clear this naming run?", "Deletes rounds, favorites, finalists, reserve and cached checks. Other runs and the migration backup are unchanged.")) return;
           fs.copyFileSync(run.path, `${run.path}.${Date.now()}.reset-backup`);
-          await mutate(ctx, state => { state.rounds = []; state.liked = []; state.finalists = []; state.reserve = []; state.reservePoolId = undefined; state.pools = []; state.lastBatch = undefined; state.availability = {}; state.dismissed = []; state.generationMetrics = []; });
+          await mutate(ctx, state => { state.rounds = []; state.liked = []; state.selected = []; state.finalists = []; state.reserve = []; state.reservePoolId = undefined; state.pools = []; state.lastBatch = undefined; state.availability = {}; state.dismissed = []; state.generationMetrics = []; });
           ctx.ui.notify("Naming history cleared with an external backup. Brief, feedback and models retained.", "info"); return;
         }
         if (!["more", "again", "next"].includes(command) && args.trim()) {
@@ -580,11 +652,21 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });
-  pi.on("session_shutdown", () => { for (const controller of active) controller.abort(new Error("Session closed")); });
+  pi.on("agent_end", async (_event, ctx) => {
+    const resume = resumeWorkspace;
+    resumeWorkspace = undefined;
+    if (!resume || ctx.mode !== "tui" || busy || ctx.sessionManager.getSessionId() !== resume.sessionId) return;
+    try { await runWorkspace(ctx, undefined, undefined, true, resume.position); }
+    catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+  });
+  pi.on("session_shutdown", () => {
+    resumeWorkspace = undefined;
+    for (const controller of active) controller.abort(new Error("Session closed"));
+  });
 }
 
 const HELP = [
-  "/brand  resume: More names · Give feedback · Review favorites · Brief / Details",
+  "/brand  resume: Names · Favorites · History; Space marks · f favorites · c checks pending · Shift+C rechecks · d discards",
   "/brand <product>  start naming",
   "/brand more  show the remaining pool, or generate from the active brief",
   "/brand feedback <comment>  interpret feedback and show targeted brief changes",

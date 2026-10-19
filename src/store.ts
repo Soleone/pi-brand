@@ -117,6 +117,15 @@ export function loadBrandState(
     saveBrandState(statePath, parsed);
     warnings.push(`Naming brief and feedback history are now editable outside the project: ${documents.brief}`);
   }
+  if ((raw as { version: number }).version === 3) {
+    const backup = `${statePath}.v3-backup`;
+    try { fs.copyFileSync(statePath, backup, fs.constants.COPYFILE_EXCL); fs.chmodSync(backup, 0o600); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    // Old reserves predate favorite-led generation and must not masquerade as fresh inputs.
+    parsed.reserve = [];
+    parsed.reservePoolId = undefined;
+    warnings.push("Active names now include the last viewed round and favorites. Older rounds remain in History; an external v3 backup was retained.");
+  }
   const markdown = fs.readFileSync(documents.brief, "utf8");
   let content;
   try { content = parseBrief(markdown); }
@@ -125,6 +134,7 @@ export function loadBrandState(
     applyBriefChanges(parsed, content, { text: markdown, source: "file", author: "unknown" });
   }
   parsed.briefDocumentHash = documentHash(markdown);
+  if ((raw as { version: number }).version === 3) saveBrandState(statePath, parsed);
   return { state: parsed, path: statePath, isNew: false, warnings };
 }
 
@@ -136,6 +146,7 @@ export function saveBrandState(statePath: string, state: BrandState): void {
   try { existing = fs.readFileSync(documents.brief, "utf8"); }
   catch (error) { if (!isMissingFile(error)) throw error; }
   if (existing !== undefined && documentHash(existing) !== state.briefDocumentHash) throw new Error(`The naming brief changed on disk. Reload it before saving: ${documents.brief}`);
+  existing = existing?.replace("Feedback history is reference only. Favorites are not implicit instructions; add taste examples here.", "Feedback history is reference only. Favorites are additional positive taste examples; the brief takes priority.");
   const markdown = existing !== undefined && JSON.stringify(parseBrief(existing)) === JSON.stringify(namingContent(state)) ? existing : formatBrief(namingContent(state));
   state.briefDocumentHash = documentHash(markdown);
   atomicWrite(documents.brief, markdown);
@@ -146,7 +157,7 @@ export function saveBrandState(statePath: string, state: BrandState): void {
     if (!history.includes(`<!-- feedback:${entry.id} -->`)) history += `\n${formatFeedbackEntry(entry)}`;
   }
   atomicWrite(documents.feedback, history);
-  const payload: BrandState = { ...state, version: 3, updatedAt: new Date().toISOString() };
+  const payload: BrandState = { ...state, version: 4, updatedAt: new Date().toISOString() };
   atomicWrite(statePath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
@@ -181,6 +192,7 @@ export function recordRound(
     poolId: input.poolId, origin: input.origin ?? "legacy", briefRevision: input.briefRevision,
   };
   state.rounds.push(round);
+  selectNames(state, input.candidates.map(entry => entry.name));
   if (input.directionHint?.trim() && !state.directionNotes.includes(input.directionHint.trim())) {
     state.directionNotes.push(input.directionHint.trim());
   }
@@ -188,7 +200,28 @@ export function recordRound(
   return round;
 }
 
-/** Add picks to liked, skipping duplicates by case-insensitive name. */
+export function activeNames(state: BrandState): Candidate[] {
+  const known = new Map([...state.rounds.flatMap(round => round.candidates), ...state.liked].map(entry => [availabilityKey(entry.name), entry]));
+  return state.selected.map(name => known.get(availabilityKey(name)) ?? { name });
+}
+
+export function selectNames(state: BrandState, names: Iterable<string>): void {
+  const requested = [...names].map(name => name.trim()).filter(Boolean);
+  const restored = new Set(requested.map(availabilityKey));
+  state.dismissed = state.dismissed.filter(name => !restored.has(availabilityKey(name)));
+  state.selected = [...new Map([...state.selected, ...requested].map(name => [availabilityKey(name), name])).values()];
+}
+
+export function removeLikes(state: BrandState, names: Iterable<string>): void {
+  const removed = new Set([...names].map(availabilityKey));
+  if (!state.liked.some(entry => removed.has(availabilityKey(entry.name)))) return;
+  state.liked = state.liked.filter(entry => !removed.has(availabilityKey(entry.name)));
+  state.finalists = state.finalists.filter(name => !removed.has(availabilityKey(name)));
+  state.reserve = [];
+  state.reservePoolId = undefined;
+}
+
+/** Add favorites, restoring their active membership if necessary. */
 export function addLikes(
   state: BrandState,
   round: BrandRound | undefined,
@@ -211,6 +244,8 @@ export function addLikes(
     });
     added.push(name);
   }
+  selectNames(state, picks.map(entry => entry.name));
+  if (added.length) { state.reserve = []; state.reservePoolId = undefined; }
   return added;
 }
 
@@ -291,6 +326,7 @@ export function seenNames(state: BrandState): Set<string> {
   for (const round of state.rounds) {
     for (const candidate of round.candidates) seen.add(availabilityKey(candidate.name));
   }
+  for (const name of state.selected) seen.add(availabilityKey(name));
   for (const entry of state.liked) seen.add(availabilityKey(entry.name));
   for (const name of state.dismissed) seen.add(availabilityKey(name));
   return seen;
@@ -313,8 +349,9 @@ export function dismissNames(state: BrandState, names: Iterable<string>): string
     state.dismissed.push(name);
     added.push(name);
   }
-  state.liked = state.liked.filter((entry) => !removed.has(availabilityKey(entry.name)));
-  state.finalists = state.finalists.filter((name) => !removed.has(availabilityKey(name)));
+  removeLikes(state, removed);
+  state.selected = state.selected.filter(name => !removed.has(availabilityKey(name)));
+  state.reserve = state.reserve.filter(entry => !removed.has(availabilityKey(entry.name)));
   return added;
 }
 
@@ -333,7 +370,7 @@ export function excludedNames(state: BrandState): { seen: Set<string>; kept: Set
 function normalizeState(raw: unknown): BrandState | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (record.version !== 1 && record.version !== 2 && record.version !== 3) return undefined;
+  if (record.version !== 1 && record.version !== 2 && record.version !== 3 && record.version !== 4) return undefined;
   if (!Array.isArray(record.rounds) || !Array.isArray(record.liked)) return undefined;
   const state = emptyBrandState(typeof record.product === "string" ? record.product : "");
   if (typeof record.updatedAt === "string") state.updatedAt = record.updatedAt;
@@ -386,6 +423,7 @@ function normalizeState(raw: unknown): BrandState | undefined {
         evidence: normalizeEvidence(entry.evidence),
         warnings: Array.isArray(entry.warnings) ? entry.warnings.filter((warning): warning is string => typeof warning === "string").slice(0, 20) : undefined,
         requirementsKey: typeof entry.requirementsKey === "string" ? entry.requirementsKey : undefined,
+        model: typeof entry.model === "string" ? entry.model : undefined,
       } });
     }
   }
@@ -413,7 +451,7 @@ function normalizeState(raw: unknown): BrandState | undefined {
   if (Array.isArray(record.generationMetrics)) {
     state.generationMetrics = record.generationMetrics.filter((item) => item && typeof item === "object" && typeof item.model === "string" && Number.isFinite(item.elapsedMs) && Number.isFinite(item.modelCalls) && Number.isFinite(item.generated)).slice(-50);
   }
-  if (record.version === 3) {
+  if (record.version === 3 || record.version === 4) {
     if (!Number.isInteger(record.briefRevision) || (record.briefRevision as number) < 1 || !Array.isArray(record.feedback) || !Array.isArray(record.pools)) throw new Error("Invalid naming context in saved run; refusing to replace it.");
     state.briefRevision = record.briefRevision as number;
     state.feedback = record.feedback as BrandState["feedback"];
@@ -424,6 +462,12 @@ function normalizeState(raw: unknown): BrandState | undefined {
   } else {
     state.feedback = state.directionNotes.map((text, index) => ({ id: `legacy-${index}`, createdAt: new Date().toISOString(), author: "unknown", source: "legacy", text, briefRevision: 1, changes: [] }));
   }
+  if (record.version === 4 && (!Array.isArray(record.selected) || record.selected.some(name => typeof name !== "string"))) throw new Error("Invalid active-name list; refusing to replace it.");
+  const discarded = new Set(state.dismissed.map(availabilityKey));
+  const candidates = new Map([...state.rounds.flatMap(round => round.candidates), ...state.liked].map(entry => [availabilityKey(entry.name), entry.name]));
+  const selected = record.version === 4 ? record.selected as string[] : [...(state.rounds.at(-1)?.candidates.map(entry => entry.name) ?? []), ...state.liked.map(entry => entry.name)];
+  state.selected = [...new Map([...selected, ...state.liked.map(entry => entry.name)].map(name => candidates.get(availabilityKey(name)) ?? name.trim()).filter(name => !!name && !discarded.has(availabilityKey(name))).map(name => [availabilityKey(name), name])).values()];
+  state.liked = state.liked.filter(entry => !discarded.has(availabilityKey(entry.name)));
   return state;
 }
 
