@@ -355,7 +355,7 @@ test("shortlist export includes favorite changes from the current screen and per
   try {
     app.choices.push("[ ] Able", "Save and close"); await app.command("tasks");
     const before = app.modelCalls();
-    terminalScripts(app.ctx, [["\x1b[B", "f", "\t", "e"], ["\x1b"]]);
+    terminalScripts(app.ctx, [["\x1b[B", "f", "\t", "\t", "e"], ["\x1b"]]);
     await app.command("");
     const exported = loadBrandState(app.ctx.cwd, true).path.replace(/\.json$/, "") + ".shortlist.md";
     const markdown = fs.readFileSync(exported, "utf8");
@@ -371,7 +371,7 @@ test("favorites checks return to Favorites rather than Names", async () => {
   const app = harness();
   try {
     app.choices.push("[ ] Able", "[ ] Bold", "Save and close"); await app.command("tasks");
-    terminalScripts(app.ctx, [["\t", "\x1b[B", "c"]]); await app.command("");
+    terminalScripts(app.ctx, [["\t", "\t", "\x1b[B", "c"]]); await app.command("");
     await app.tools.get("brand_check")!.execute("check", { names: ["Able", "Bold"], batch: true } as never, undefined, undefined, researchContext(app.ctx, []));
     const frames = terminalScripts(app.ctx, [["f", "\x1b"]]);
     await app.emit("agent_end");

@@ -18,7 +18,7 @@ Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability che
 
 1. `/brand <what the product does>` generates names from your saved brief.
 2. Generated names join the active list as **Selected**. **Space** marks rows for bulk actions; **a** marks all filtered rows. **f** toggles Favorite on the highlighted or marked names. **Enter** opens details.
-3. **Tab or ←/→** switches **Names / Favorites / History**. Navigation never starts model work. **/** searches names.
+3. **Tab or ←/→** switches **All / Candidates / Favorites**. **h** opens History. Navigation never starts model work. **/** searches names.
 4. **g** prepares generation: see whether the next batch uses the reserve or a new model call, then explicitly start with Enter.
 5. **n** adds your own name to the list and focuses it. **Enter**, then **c**, checks just that name. Adding alone does no research or favoriting.
 6. **b** reveals the otherwise hidden brief. **e** edits it; **f** gives AI-interpreted feedback. Feedback returns to browsing, not automatic generation.

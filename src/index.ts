@@ -267,7 +267,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     let overview = overviewFirst;
     let favoritesFirst = false;
     let supplied = initial;
-    const position: WorkspacePosition = resumePosition ?? { tab: "names", cursor: 0 };
+    const position: WorkspacePosition = resumePosition ?? { tab: "all", cursor: 0 };
     const workspacePicks = new Set<string>();
     const checkCtx = screenedCtx ?? ("executeTool" in ctx ? ctx as ExtensionToolContext : undefined);
     try {
@@ -308,7 +308,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
               if (!name) continue;
               if (name.length > 60 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) throw new Error("Use a single-line name of up to 60 characters, without control characters.");
               await mutate(ctx, state => selectNames(state, [name]));
-              position.tab = "names";
+              position.tab = "all";
               position.roundId = undefined;
               position.query = "";
               position.marked = [];
@@ -411,7 +411,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         });
         const { run, round, candidates } = prepared;
         if (ctx.mode === "tui" && ctx.hasUI) {
-          position.tab = "names";
+          position.tab = "all";
           position.cursor = 0;
           position.roundId = undefined;
           position.query = "";

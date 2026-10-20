@@ -38,7 +38,7 @@ async function run(keys: string[], options: { state?: BrandState; widths?: numbe
     assert.ok(result, "screen must complete");
     return result;
   } } } as unknown as ExtensionContext;
-  await showNamingWorkspace(ctx, options.state ?? fixture(), options.position ?? { tab: "names", cursor: 0 });
+  await showNamingWorkspace(ctx, options.state ?? fixture(), options.position ?? { tab: "all", cursor: 0 });
   return { result: result!, frames };
 }
 
@@ -55,6 +55,33 @@ test("workspace opens on a compact name table, not the brief or a filter input",
   assert.doesNotMatch(table, /STATE|CHECK|selected|favorite|not checked|deep/);
   assert.doesNotMatch(screen, /delight-first|Task center|Obscure dictionary|Filter:/);
   assert.ok(frames[0]!.length <= 14);
+});
+
+test("Candidates lists only green and yellow findings, while All keeps clashes and failures", async () => {
+  const state = fixture();
+  state.availability["a much longer name"] = { score: "perfect", reason: "No observed collisions", checkedAt: "2026-01-01" };
+  state.availability["仕事"] = { score: "terrible", reason: "Same-space product", checkedAt: "2026-01-01" };
+  state.availability["cafe\u0301"] = { score: "error", reason: "Search offline", checkedAt: "2026-01-01" };
+  const { frames } = await run(["\t", esc], { state });
+  assert.match(frames[0]!.join("\n"), /\[All\].*Candidates.*Favorites/);
+  assert.doesNotMatch(frames[0]!.join("\n"), /\[History\]/);
+  assert.match(frames[1]!.join("\n"), /\[Candidates\]/);
+  const candidates = frames[1]!.join("\n");
+  assert.match(candidates, /TaskHQ/);
+  assert.match(candidates, /A much longer name/);
+  assert.doesNotMatch(candidates, /仕事|Cafe/);
+});
+
+test("tab headers keep their rows fixed and h opens history without adding a tab", async () => {
+  const { frames } = await run(["\t", "\t", "h", "\t", "h", esc, esc]);
+  for (const frame of [frames[0]!, frames[2]!, frames[3]!]) {
+    assert.match(frame[0]!, /Brand/);
+    assert.match(frame[2]!, /^─+$/);
+  }
+  assert.doesNotMatch(frames[0]!.join("\n"), /History/);
+  assert.match(frames[3]!.join("\n"), /ROUND.*DATE.*SOURCE.*NAMES/);
+  assert.match(frames[5]!.join("\n"), /ROUND.*DATE.*SOURCE.*NAMES/);
+  assert.match(frames[6]!.join("\n"), /\[\uf005 Favorites\]/);
 });
 
 test("columns use display width, are capped, and never overflow during navigation or resizing", async () => {
@@ -83,7 +110,7 @@ test("compact assessments retain short labels and favorites remain independent o
   assert.match(frames[5]!.find(line => line.includes("Name0"))!, /^ Name0\s+/);
   assert.doesNotMatch(frames[8]!.find(line => line.includes("Name0"))!, //);
   const history = fixture(); history.dismissed = ["仕事"]; history.selected = history.selected.filter(name => name !== "仕事");
-  const discarded = await run([esc, esc], { state: history, position: { tab: "names", cursor: 0, roundId: "round-1" } });
+  const discarded = await run([esc, esc], { state: history, position: { tab: "all", cursor: 0, roundId: "round-1" } });
   assert.match(discarded.frames[0]!.find(line => line.includes("仕事"))!, /仕事\s+\s+—/);
 });
 
@@ -165,7 +192,7 @@ test("errors are pending but cited review findings do not create a retry loop", 
   const checked = await run(["c"], { state });
   assert.ok(checked.result.action?.kind === "check");
   assert.deepEqual(checked.result.action.names, ["仕事", "Cafe\u0301"]);
-  const details = await run(["\r", esc, esc], { state, position: { tab: "names", cursor: 2 }, widths: [24, 80] });
+  const details = await run(["\r", esc, esc], { state, position: { tab: "all", cursor: 2 }, widths: [24, 80] });
   assert.match(details.frames.flat().join("\n"), /Retry check/);
   assert.match(details.frames.flat().join("\n"), /Search offline/);
 });
@@ -173,12 +200,12 @@ test("errors are pending but cited review findings do not create a retry loop", 
 test("best-first ordering preserves keyboard focus and temporary marks", async () => {
   const state = fixture();
   state.availability["a much longer name"] = { score: "perfect", reason: "No observed collisions", checkedAt: "2026-01-01" };
-  const position: WorkspacePosition = { tab: "names", cursor: 0 };
+  const position: WorkspacePosition = { tab: "all", cursor: 0 };
   const sorted = await run([" ", "s", "\r", esc, esc, esc], { state, position });
   const rows = sorted.frames[2]!.filter(line => /TaskHQ|A much longer name/.test(line));
   assert.match(rows[0]!, /A much longer name/);
   assert.match(rows[1]!, /^ TaskHQ/);
-  assert.match(sorted.frames[3]!.join("\n"), /Names \/ TaskHQ/);
+  assert.match(sorted.frames[3]!.join("\n"), /All \/ TaskHQ/);
   assert.equal(position.sort, "best");
   const restored = await run(["s", esc], { state, position });
   assert.equal(position.sort, "recent");
@@ -186,9 +213,9 @@ test("best-first ordering preserves keyboard focus and temporary marks", async (
 });
 
 test("Favorites offers a no-research shortlist export", async () => {
-  const exported = await run(["\t", "e"]);
+  const exported = await run(["\t", "\t", "e"]);
   assert.deepEqual(exported.result.action, { kind: "export" });
-  assert.match(exported.frames[1]!.join("\n"), /Export shortlist/);
+  assert.match(exported.frames[2]!.join("\n"), /Export shortlist/);
 });
 
 test("bulk favorite changes affect stage, not marks, and invalidate the pool preview", async () => {
@@ -228,8 +255,8 @@ test("favorite toggles do not dismiss names and carry changes on close", async (
     { name: "TaskHQ", roundId: "round-1", liked: false },
     { name: "A much longer name", roundId: "round-1", liked: true },
   ]);
-  const favorites = await run([down, "f", "\t", esc]);
-  assert.ok(favorites.frames[3]!.some(line => /A much longer name/.test(line)));
+  const favorites = await run([down, "f", "\t", "\t", esc]);
+  assert.ok(favorites.frames[4]!.some(line => /A much longer name/.test(line)));
 });
 
 test("checks start directly while similar-name refinement still requires confirmation", async () => {
@@ -249,7 +276,7 @@ test("unchecked details show one status, a name-led title and only primary actio
   state.selected = state.rounds[0]!.candidates.map(entry => entry.name);
   const { frames } = await run([down, "\r", " ", "?", "?", esc, esc], { state, widths: [160] });
   const screen = frames[2]!.join("\n");
-  assert.match(screen, /Names \/ TaskPatio.*Selected/);
+  assert.match(screen, /All \/ TaskPatio.*Selected/);
   assert.match(screen, /A lighter, more personal place/);
   assert.match(screen, /Availability\s+Not checked/);
   assert.equal(screen.match(/Not checked/g)?.length, 1);
@@ -275,7 +302,7 @@ test("checked details retain labeled findings, warnings and scrollable evidence"
   assert.match(first, /Evidence\s+8 sources/);
   assert.match(first, /not trademark clearance/);
   const last = frames[31]!.join("\n");
-  assert.match(last, /Names \/ TaskHQ.*Favorite/);
+  assert.match(last, /All \/ TaskHQ.*Favorite/);
   assert.match(last, /https:\/\/example.com\/source-7/);
   assert.match(last, /Space\s+Remove favorite/);
 });
@@ -297,10 +324,10 @@ test("n adds from Names or Favorites, but not History or search", async () => {
   assert.deepEqual((await run(["N"])).result.action, { kind: "add" });
   assert.deepEqual((await run(["\x1b[110;2u"])).result.action, { kind: "add" });
   assert.deepEqual((await run(["\t", "n"])).result.action, { kind: "add" });
-  assert.equal((await run(["n", esc], { position: { tab: "history", cursor: 0 } })).result.action, undefined);
-  const position: WorkspacePosition = { tab: "names", cursor: 0, focusName: "仕事" };
+  assert.equal((await run(["n", esc, esc], { position: { tab: "history", cursor: 0 } })).result.action, undefined);
+  const position: WorkspacePosition = { tab: "all", cursor: 0, focusName: "仕事" };
   const focused = await run(["\r", esc, esc], { position });
-  assert.match(focused.frames[1]!.join("\n"), /Names \/ 仕事/);
+  assert.match(focused.frames[1]!.join("\n"), /All \/ 仕事/);
   assert.equal(position.focusName, undefined);
 });
 
@@ -316,7 +343,7 @@ test("empty screens are safe and history opens a saved round without generating"
   await run(["\r", " ", "\t", "c", "\t", "\r", esc], { state });
   const position: WorkspacePosition = { tab: "history", cursor: 0 };
   const history = await run(["\r", esc, esc], { position });
-  assert.equal(position.tab, "names");
+  assert.equal(position.tab, "all");
   assert.equal(position.roundId, undefined);
   assert.equal(history.result.action, undefined);
 });

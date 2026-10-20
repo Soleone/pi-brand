@@ -7,11 +7,18 @@ import type { BrandState, Candidate } from "./types.ts";
 import type { WorkspaceAction } from "./workspace.ts";
 
 export interface FavoriteChange { name: string; roundId?: string; liked: boolean }
-export interface WorkspacePosition { tab: "names" | "favorites" | "history"; cursor: number; roundId?: string; query?: string; marked?: string[]; focusName?: string; notice?: string; sort?: "recent" | "best" }
+export interface WorkspacePosition { tab: "all" | "candidates" | "favorites" | "history"; cursor: number; roundId?: string; query?: string; marked?: string[]; focusName?: string; notice?: string; sort?: "recent" | "best" }
 type ScreenAction = WorkspaceAction | { kind: "edit-brief" } | { kind: "annotations" } | { kind: "inputs" } | { kind: "settings" };
 export interface WorkspaceScreenResult { action?: ScreenAction; favoriteChanges: FavoriteChange[] }
 
 const PAGE_SIZE = 10;
+const TABS = [["all", "All"], ["candidates", "Candidates"], ["favorites", " Favorites"]] as const;
+type ListTab = (typeof TABS)[number][0];
+
+/** Active labels keep their cell width so the strip never shifts between tabs. */
+export function tabCell(label: string, active: boolean): string {
+  return active ? `[${label}]` : ` ${label} `;
+}
 
 /** One color per assessment state: green usable, yellow caution, red clash, blue or gray needs a check. */
 export function scoreColor(score: AvailabilityScore | undefined): Parameters<Theme["fg"]>[0] {
@@ -26,6 +33,11 @@ export function scoreColor(score: AvailabilityScore | undefined): Parameters<The
     case "unknown": return "muted";
     default: return "dim";
   }
+}
+
+/** Scores that read as green or yellow: conclusive, with no name clash or failed check. */
+export function isCandidateScore(score: AvailabilityScore | undefined): boolean {
+  return score === "perfect" || score === "good" || score === "decent" || score === "bad" || score === "review";
 }
 
 /** Pad terminal columns, not code units (names may contain wide or combining characters). */
@@ -49,6 +61,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
     const marked = new Set(position.marked ?? []);
     let notice = position.notice ?? "";
     delete position.notice;
+    let historyReturn: ListTab = position.tab === "history" ? "all" : position.tab;
     let screen: "list" | "detail" | "brief" | "generate" | "similar" = "list";
     let searching = false;
     let focused = false;
@@ -69,7 +82,12 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
     const entries = () => {
       const known = new Map([...rounds.flatMap(round => round.candidates), ...state.liked].map(entry => [availabilityKey(entry.name), entry]));
       for (const name of state.selected) if (!known.has(availabilityKey(name))) known.set(availabilityKey(name), { name });
-      const source = position.tab === "names" && position.roundId ? activeRound()?.candidates ?? [] : [...known.values()].filter(entry => (position.tab === "favorites" ? favorites : selectedNames).has(availabilityKey(entry.name)));
+      const active = [...known.values()].filter(entry => (position.tab === "favorites" ? favorites : selectedNames).has(availabilityKey(entry.name)));
+      const source = position.tab === "all" && position.roundId
+        ? activeRound()?.candidates ?? []
+        : position.tab === "candidates"
+          ? active.filter(entry => isCandidateScore(assessmentScore(entry)))
+          : active;
       const filtered = source.filter(entry => `${entry.name} ${entry.flavor ?? ""}`.toLocaleLowerCase().includes(input.getValue().toLocaleLowerCase()));
       return position.sort === "best" ? filtered.sort((a, b) => compareScores(assessmentScore(a) ?? "unknown", assessmentScore(b) ?? "unknown")) : filtered;
     };
@@ -97,7 +115,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
       const rule = fg("borderMuted", "─".repeat(Math.max(0, width)));
       const lines = [` ${fg("accent", theme.bold(" Brand"))}  ${fg("dim", `${selectedNames.size} selected · ${favorites.size} ${favorites.size === 1 ? "favorite" : "favorites"} · Brief r${state.briefRevision}`)}`];
       if (screen === "list") {
-        lines.push(" " + ([ ["names", "Names"], ["favorites", " Favorites"], ["history", " History"] ] as const).map(([tab, label]) => position.tab === tab ? fg("accent", theme.bold(`[${label}]`)) : fg("muted", label)).join("   "), rule);
+        lines.push(" " + TABS.map(([tab, label]) => position.tab === tab ? fg("accent", theme.bold(tabCell(label, true))) : fg("muted", tabCell(label, false))).join("  "), rule);
         if (searching || input.getValue()) lines.push(...input.render(Math.max(1, width)));
         if (position.tab === "history") {
           position.cursor = Math.max(0, Math.min(position.cursor, rounds.length - 1));
@@ -107,8 +125,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
             const text = `${start + index === position.cursor ? " › " : "   "}${nameCell(round.id, 20)}  ${round.createdAt.slice(0, 10)}   ${nameCell(round.origin ?? "legacy", 9)} ${round.candidates.length}`;
             lines.push(start + index === position.cursor ? fg("accent", text) : text);
           }
-          if (!rounds.length) lines.push(fg("muted", " No rounds yet. Press g to prepare generation."));
-        } else {
+          if (!rounds.length) lines.push(fg("muted", " No rounds yet. Press g to prepare generation."));        } else {
           const rows = entries();
           position.cursor = Math.max(0, Math.min(position.cursor, rows.length - 1));
           const start = Math.max(0, position.cursor - PAGE_SIZE + 1);
@@ -126,10 +143,10 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
             const name = nameCell(entry.name, nameWidth);
             lines.push(`${mark} ${active ? fg("accent", theme.bold(name)) : discarded.has(key) ? fg("dim", name) : name} ${favorite}${assessment ? `  ${fg(color, status)}` : ""}`);
           }
-          if (!rows.length) lines.push(fg("muted", input.getValue() ? " No matches. / to change search; Esc clears it." : position.tab === "favorites" ? " No favorites yet. Press f on a name to star it." : " No names yet. Press g to prepare generation."));
+          if (!rows.length) lines.push(fg("muted", input.getValue() ? " No matches. / to change search; Esc clears it." : position.tab === "favorites" ? " No favorites yet. Press f on a name to star it." : position.tab === "candidates" ? " No possible candidates yet. Press c to check pending names or g to generate." : " No names yet. Press g to prepare generation."));
           if (position.tab === "favorites" && rows.length) lines.push(fg("dim", " e Export shortlist with findings and sources · no new research"));
           if (rows.length > PAGE_SIZE) lines.push(fg("dim", ` ${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}`));
-          if (position.tab === "names" && position.roundId && activeRound()) lines.push(fg("dim", ` History: ${activeRound()!.id} · ${activeRound()!.origin ?? "legacy"} · brief r${activeRound()!.briefRevision ?? "?"}`));
+          if (position.tab === "all" && position.roundId && activeRound()) lines.push(fg("dim", ` History: ${activeRound()!.id} · ${activeRound()!.origin ?? "legacy"} · brief r${activeRound()!.briefRevision ?? "?"}`));
           const checkActions = marked.size ? `${marked.size} marked · c Check marked · Shift+C Recheck marked · d Discard marked` : `c Check pending (${rows.filter(isPending).length}) · Shift+C Recheck all (${rows.length})`;
           lines.push(...wrapTextWithAnsi(checkActions, Math.max(1, width - 2)).map(line => fg("muted", ` ${line}`)));
           if (rows.some(entry => getAvailability(state, entry.name)?.score === "unknown")) {
@@ -139,7 +156,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
         if (notice) lines.push(...wrapTextWithAnsi(notice, Math.max(1, width - 2)).map(line => fg("warning", ` ${line}`)));
         lines.push(rule);
         for (const hint of [
-          position.tab === "history" ? " Tab/←→ screens · ↑↓ move · Enter open round · Esc back" : " Tab/←→ tabs · ↑↓ move · Enter details · Space mark · a all · s sort",
+          position.tab === "history" ? " h/Esc back · ↑↓ move · Enter open round" : " Tab/←→ tabs · h history · ↑↓ move · Enter details · Space mark · a all · s sort",
           position.tab === "history" ? " b brief · g generate" : ` f ${marked.size ? "favorite marked" : "favorite"} · d discard · / search · n add · b brief · g generate · Esc back`,
         ]) lines.push(...wrapTextWithAnsi(fg("dim", hint), Math.max(1, width)));
       } else if (screen === "brief") {
@@ -168,7 +185,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
         const record = getAvailability(state, detail.name);
         const saved = favorites.has(availabilityKey(detail.name));
         const contentWidth = Math.max(1, Math.min(width - 2, 86));
-        const title = `${fg("muted", position.tab === "favorites" ? "Favorites /" : "Names /")} ${fg("accent", theme.bold(detail.name))}  ${saved ? fg("warning", " Favorite") : fg("dim", discarded.has(availabilityKey(detail.name)) ? "Discarded" : selectedNames.has(availabilityKey(detail.name)) ? "Selected" : "History")}`;
+        const title = `${fg("muted", position.tab === "favorites" ? "Favorites /" : position.tab === "candidates" ? "Candidates /" : position.roundId ? "History /" : "All /")} ${fg("accent", theme.bold(detail.name))}  ${saved ? fg("warning", " Favorite") : fg("dim", discarded.has(availabilityKey(detail.name)) ? "Discarded" : selectedNames.has(availabilityKey(detail.name)) ? "Selected" : "History")}`;
         lines.splice(0, 1, ...wrapTextWithAnsi(title, contentWidth).map(line => ` ${line}`));
         if (detail.flavor) lines.push(...wrapTextWithAnsi(detail.flavor, contentWidth).map(line => ` ${line}`));
         lines.push("");
@@ -232,7 +249,8 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           if (screen !== "list") screen = "list";
           else if (marked.size) marked.clear();
           else if (input.getValue()) { input.setValue(""); position.cursor = 0; }
-          else if (position.roundId) setTab("names");
+          else if (position.roundId) setTab("all");
+          else if (position.tab === "history") setTab(historyReturn);
           else { finish(); return; }
         } else if (screen === "generate") {
           if (enter) { finish({ kind: "more" }); return; }
@@ -261,9 +279,16 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           else if (matchesKey(data, Key.up)) detailScroll = Math.max(0, detailScroll - 1);
         } else {
           if (matchesKey(data, Key.tab) || matchesKey(data, Key.right) || matchesKey(data, Key.left)) {
-            const tabs = ["names", "favorites", "history"] as const;
-            setTab(tabs[(tabs.indexOf(position.tab) + (matchesKey(data, Key.left) ? 2 : 1)) % tabs.length]!);
+            if (position.tab === "history") setTab(historyReturn);
+            else {
+              const index = TABS.findIndex(([tab]) => tab === position.tab);
+              setTab(TABS[(index + (matchesKey(data, Key.left) ? TABS.length - 1 : 1)) % TABS.length]![0]);
+            }
           } else if (data === "/" && position.tab !== "history") searching = true;
+          else if (data === "h") {
+            if (position.tab === "history") setTab(historyReturn);
+            else { historyReturn = position.tab; setTab("history"); }
+          }
           else if ((data === "n" || data === "N" || matchesKey(data, Key.shift("n"))) && position.tab !== "history") {
             finish({ kind: "add" }); return;
           }
@@ -301,7 +326,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           else if (matchesKey(data, Key.pageDown)) position.cursor += PAGE_SIZE;
           else if (enter && position.tab === "history") {
             const round = rounds[position.cursor];
-            if (round) { setTab("names"); position.roundId = round.id; }
+            if (round) { setTab("all"); position.roundId = round.id; }
           } else if (enter && selected()) { detail = selected(); detailScroll = 0; detailActions = false; screen = "detail"; }
           else if (data === " " && position.tab !== "history" && selected()) {
             const key = availabilityKey(selected()!.name);

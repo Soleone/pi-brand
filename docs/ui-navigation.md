@@ -9,7 +9,7 @@ The everyday loop is **generate → select → favorite/react → refine → gen
 - **Favorite** is a starred active name. Favorites are positive taste references alongside the brief.
 - **Discarded** names leave the active list and favorites, but remain in saved rounds with their evidence. They are still excluded from future suggestions. Restore a historical name with `s` in its details, or favorite it explicitly.
 
-Unfavoriting demotes to Selected. Discarding removes from the active list. Neither rewrites a saved round. All active generations accumulate in Names; History can open an individual saved round.
+Unfavoriting demotes to Selected. Discarding removes from the active list. Neither rewrites a saved round. All active generations accumulate in All; History can open an individual saved round.
 
 ## Bulk marks and checks
 
@@ -36,16 +36,17 @@ Searches include the exact name alone as well as product/category queries. Searc
 
 | Screen | Navigation and actions |
 | --- | --- |
-| Names | Active selected names and favorites, newest rounds first. ↑↓ moves; Enter opens details; Space marks. |
+| All | Every active selected name, newest rounds first. ↑↓ moves; Enter opens details; Space marks. |
+| Candidates | The same table, limited to conclusive green or yellow findings: clear, light use, some overlap, crowded and needs review. Clashes, failed checks and unchecked names stay out. |
 | Favorites | Same table, filtered to favorites. The same bulk actions apply. |
-| History | Saved rounds; Enter opens one in Names. Esc returns to the active list. |
+| History | Opened with `h`, never a tab. Saved rounds; Enter opens one in All. `h` or Esc returns to the previous tab. |
 | Name details | Name-led, width-capped fields for availability, checking model/date, findings and evidence. Space or `f` toggles favorite; `c` starts a check; `m` prepares similar-name refinement. `?` reveals refresh, quick screen and discard. Long evidence scrolls without hiding the name or controls. |
 | Generation (`g`) | Shows brief revision, direction, favorite/example counts and reserve versus new model call. Enter explicitly starts. Brief, favorite or creative-model changes invalidate old reserves. |
 | Brief (`b`) | Hidden by default. `e` edits, `f` gives AI-interpreted feedback, `h` opens feedback history, `i` inspects saved inputs, `s` opens settings. |
 
-Tab or ←/→ switches the list screens. Navigation and Enter on a row never start model or web work. `/` enters search mode. While typing a search, action keys belong to the search. Enter ends typing; Esc ends typing, clears marks/filter or returns from a history round before finally closing the list. Ctrl+C closes.
+Tab or ←/→ switches All, Candidates and Favorites. `h` opens History and returns to the tab you came from. Navigation and Enter on a row never start model or web work. `/` enters search mode. While typing a search, action keys belong to the search. Enter ends typing; Esc ends typing, clears marks/filter or returns from a history round before finally closing the list. Ctrl+C closes.
 
-`n` (or `N`) in Names or Favorites opens **Add a name**. Enter a name of up to 60 characters; cancel or leave it blank to change nothing. The active Names list opens with that name focused and prior search/marks cleared. Adding never generates, checks or favorites a name. Existing names are reused case-insensitively, retaining evidence and favorites; discarded names are restored. Saved rounds are not changed.
+`n` (or `N`) in All, Candidates or Favorites opens **Add a name**. Enter a name of up to 60 characters; cancel or leave it blank to change nothing. The All list opens with that name focused and prior search/marks cleared. Adding never generates, checks or favorites a name. Existing names are reused case-insensitively, retaining evidence and favorites; discarded names are restored. Saved rounds are not changed.
 
 Favorite changes save when leaving the workspace for another operation or closing it. Feedback returns to browsing; generation is a separate step. The brief takes priority over favorite examples. Selected and discarded names are duplicate exclusions, not taste instructions; feedback history is reference only.
 

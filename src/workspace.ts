@@ -103,7 +103,7 @@ async function detailAction(ctx: ExtensionContext, state: BrandState, statePath:
   }
 }
 
-export async function chooseWorkspaceAction(ctx: ExtensionContext, state: BrandState, statePath: string, favoritesFirst = false, position: WorkspacePosition = { tab: "names", cursor: 0 }): Promise<WorkspaceAction | undefined> {
+export async function chooseWorkspaceAction(ctx: ExtensionContext, state: BrandState, statePath: string, favoritesFirst = false, position: WorkspacePosition = { tab: "all", cursor: 0 }): Promise<WorkspaceAction | undefined> {
   if (!ctx.hasUI) { ctx.ui.notify(brandOverview(state), "info"); return; }
   if (ctx.mode === "tui") {
     if (favoritesFirst) { position.tab = "favorites"; position.cursor = 0; }
