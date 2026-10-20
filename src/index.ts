@@ -111,9 +111,11 @@ async function chooseFinalists(ctx: ExtensionContext, initial?: string[]): Promi
   return outcome.names.length > 0;
 }
 
-/** pi exposes `tools` and `executeTool` as non-enumerable, so a spread would silently drop them. */
+/** pi exposes `tools` and `executeTool` as non-enumerable and `signal` as a getter, so a spread would drop the former and an assign would trip the latter. */
 function withToolSignal(ctx: ExtensionToolContext, signal: AbortSignal | undefined): ExtensionToolContext {
-  return Object.assign(Object.create(ctx), { signal: signal ?? ctx.signal }) as ExtensionToolContext;
+  return Object.defineProperty(Object.create(ctx), "signal", {
+    value: signal ?? ctx.signal, enumerable: true, writable: true, configurable: true,
+  }) as ExtensionToolContext;
 }
 
 function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckDependencies {

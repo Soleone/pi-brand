@@ -342,6 +342,7 @@ test("tool checks survive pi's non-enumerable tools and executeTool context", as
     delete ctx.tools;
     delete ctx.executeTool;
     Object.defineProperties(ctx, { tools: { get: () => source.tools }, executeTool: { value: source.executeTool } });
+    Object.defineProperty(ctx, "signal", { get: () => new AbortController().signal, enumerable: true });
     const result = await app.tools.get("brand_check")!.execute("check", { names: ["Able"], stage: "screen" } as never, undefined, undefined, ctx as unknown as ExtensionToolContext);
     assert.notEqual(result.isError, true);
     assert.deepEqual(searches, ["Able"]);
