@@ -17,8 +17,8 @@ export type GenerationRequest = (
   signal: AbortSignal,
 ) => Promise<{ candidates: Candidate[]; usage?: Usage }>;
 
-const REQUEST_TIMEOUT_MS = 30_000;
-const OPERATION_TIMEOUT_MS = 45_000;
+const REQUEST_TIMEOUT_MS = 120_000;
+const OPERATION_TIMEOUT_MS = 300_000;
 const MAX_PROPOSALS = 24;
 const MAX_POOL = 24;
 const REFILL_THRESHOLD = 8;

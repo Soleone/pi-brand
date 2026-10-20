@@ -7,6 +7,7 @@ import { isAvailabilityScore, type CollisionSignals } from "./scoring.ts";
 import { applyBriefChanges, documentHash, formatBrief, formatFeedbackEntry, namingContent, parseBrief } from "./brief.ts";
 import {
   emptyBrandState,
+  isBrandReasoning,
   type AvailabilityRecord,
   type BrandRound,
   type BrandState,
@@ -450,6 +451,8 @@ function normalizeState(raw: unknown): BrandState | undefined {
   }
   if (typeof record.model === "string" && /^[^/]+\/.+$/.test(record.model)) state.model = record.model;
   if (typeof record.workerModel === "string" && /^[^/]+\/.+$/.test(record.workerModel)) state.workerModel = record.workerModel;
+  if (typeof record.reasoning === "string" && isBrandReasoning(record.reasoning)) state.reasoning = record.reasoning;
+  if (typeof record.workerReasoning === "string" && isBrandReasoning(record.workerReasoning)) state.workerReasoning = record.workerReasoning;
   if (Array.isArray(record.reserve)) state.reserve = normalizeRound({ candidates: record.reserve })?.candidates ?? [];
   if (Array.isArray(record.finalists)) {
     const liked = new Map(state.liked.map((entry) => [availabilityKey(entry.name), entry.name]));

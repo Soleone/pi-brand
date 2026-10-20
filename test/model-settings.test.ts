@@ -31,7 +31,33 @@ test("settings honor scoped models and exclude unauthenticated entries without m
 
 test("non-UI settings report command alternatives without opening a dialog", async () => {
   const notices: string[] = [];
-  const ctx = { hasUI: false, ui: { notify: (text: string) => notices.push(text), select: () => { throw new Error("no UI"); } } } as unknown as ExtensionContext;
+  const ctx = {
+    hasUI: false, modelRegistry: { find: () => undefined },
+    ui: { notify: (text: string) => notices.push(text), select: () => { throw new Error("no UI"); } },
+  } as unknown as ExtensionContext;
   assert.equal(await selectBrandModels(ctx, emptyBrandState()), undefined);
   assert.match(notices[0], /brand worker.*same/);
+});
+
+test("reasoning is set independently for the creative and worker models", async () => {
+  const responses = [
+    "Reasoning (creative): default (pi: medium)", "high",
+    "Reasoning (worker): default (pi: medium)", "max",
+    "Save settings",
+  ];
+  const ctx = {
+    hasUI: true, mode: "rpc", scopedModels: [],
+    modelRegistry: {
+      find: () => ({ provider: "test", id: "creative", reasoning: true }),
+      getAvailable: () => [{ provider: "test", id: "creative", reasoning: true }],
+      hasConfiguredAuth: () => true,
+    },
+    ui: { select: async (title: string, choices: string[]) => {
+      if (title.startsWith("Reasoning level")) assert.ok(choices.includes("Default (pi: medium)") && choices.includes("off"));
+      return responses.shift();
+    } },
+  } as unknown as ExtensionContext;
+  const result = await selectBrandModels(ctx, emptyBrandState());
+  assert.equal(result?.reasoning, "high");
+  assert.equal(result?.workerReasoning, "max");
 });

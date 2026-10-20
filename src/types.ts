@@ -1,5 +1,14 @@
-import type { Usage } from "@earendil-works/pi-ai";
+import type { ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { AvailabilityScore, CollisionSignals } from "./scoring.ts";
+
+/** Explicit brand reasoning override. Omitted means follow pi's configured default for the model. */
+export type BrandReasoning = ThinkingLevel | "off";
+
+export const BRAND_REASONING_LEVELS: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+export function isBrandReasoning(value: string): value is BrandReasoning {
+  return value === "off" || (BRAND_REASONING_LEVELS as readonly string[]).includes(value);
+}
 
 export interface Candidate {
   name: string;
@@ -123,6 +132,10 @@ export interface BrandState {
   model: string;
   /** Omitted means use the creative model for availability assessment too. */
   workerModel?: string;
+  /** Overrides pi's configured reasoning level for the creative model. Omitted follows pi. */
+  reasoning?: BrandReasoning;
+  /** Overrides pi's configured reasoning level for the worker model. Omitted follows pi. */
+  workerReasoning?: BrandReasoning;
   reserve: Candidate[];
   generationMetrics: GenerationMetric[];
   briefRevision: number;

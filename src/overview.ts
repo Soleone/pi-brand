@@ -23,7 +23,7 @@ export function generationStats(state: BrandState, path: string): string {
     `Run: ${path}`, `Brief: ${documents.brief}`, `Feedback: ${documents.feedback}`,
     `${state.pools.length} recorded pools · ${state.rounds.length} viewed rounds · ${excludedNames(state).seen.size} seen names`,
     `Last ${metrics.length} generated pools (up to 50 retained): ${metrics.reduce((sum, metric) => sum + metric.modelCalls, 0)} model calls.`,
-    `Reserve: ${state.reserve.length}. Creative: ${state.model}. Worker: ${state.workerModel ?? "same as creative"}.`,
+    `Reserve: ${state.reserve.length}. Creative: ${state.model}. Worker: ${state.workerModel ?? "same as creative"}. Creative reasoning: ${state.reasoning ?? "pi default"}. Worker reasoning: ${state.workerReasoning ?? "pi default"}.`,
     `Reported generation tokens: ${usage?.input ?? 0} uncached input, ${usage?.cacheRead ?? 0} cache reads, ${usage?.output ?? 0} output. Cost: $${(usage?.cost.total ?? 0).toFixed(4)}.`,
     `Last generation: ${metrics.at(-1)?.elapsedMs ?? 0}ms. Brief editing, assessment and failed/aborted request costs are not included here.`,
   ].join("\n");

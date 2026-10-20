@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { Type, type TSchema, type Usage } from "@earendil-works/pi-ai";
+import { Type, type TSchema, type ThinkingLevel, type Usage } from "@earendil-works/pi-ai";
 import { Check } from "typebox/value";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { GENERATION_SYSTEM_PROMPT, type GenerationRequest } from "./generation.ts";
+import { brandPiSettings, type BrandPiSettings } from "./settings.ts";
 import { getBrandStatePath } from "./store.ts";
+import type { BrandReasoning } from "./types.ts";
 
 export type BrandRequestRole = "creative" | "worker" | "brief";
 
@@ -26,6 +28,26 @@ const REQUEST_PROFILES = {
   },
 } as const;
 
+/** Pi's default thinking level for a model, or undefined when reasoning is off. */
+export function piReasoningDefault(
+  model: { provider: string; id: string },
+  settings: Pick<BrandPiSettings, "defaultThinkingLevel" | "modelThinkingLevels"> = brandPiSettings(),
+): ThinkingLevel | undefined {
+  const level = settings.modelThinkingLevels?.[`${model.provider}/${model.id}`] ?? settings.defaultThinkingLevel;
+  return level === "off" ? undefined : level;
+}
+
+/** Resolve an explicit brand override against pi's configured default, respecting model support. */
+export function resolveReasoning(
+  model: { provider: string; id: string; reasoning: boolean },
+  override: BrandReasoning | undefined,
+  settings: Pick<BrandPiSettings, "defaultThinkingLevel" | "modelThinkingLevels"> = brandPiSettings(),
+): ThinkingLevel | undefined {
+  if (!model.reasoning) return undefined;
+  if (override === "off") return undefined;
+  return override ?? piReasoningDefault(model, settings) ?? "medium";
+}
+
 /** Cache routing identity only, not a provider conversation or stored transcript. */
 export function brandCacheSessionId(ctx: ExtensionContext, modelRef: string, role: BrandRequestRole): string {
   const runPath = getBrandStatePath(ctx.cwd, ctx.isProjectTrusted());
@@ -47,6 +69,7 @@ export async function requestStructured<T>(
   schema: TSchema,
   signal: AbortSignal,
   role: BrandRequestRole = "creative",
+  reasoningOverride?: BrandReasoning,
 ): Promise<{ value: T; usage: Usage }> {
   signal.throwIfAborted();
   const profile = REQUEST_PROFILES[role];
@@ -68,12 +91,15 @@ export async function requestStructured<T>(
   const maxTokens = Math.floor(Math.min(profile.maxTokens, providerCap, room));
   if (maxTokens < profile.minTokens) throw new Error(`Brand ${role} input is too large for ${modelRef} to return a complete result. Choose a larger-context model or narrow the brief/evidence.`);
   const messages = [{ role: "user" as const, content: prompt, timestamp: Date.now() }];
+  const reasoning = resolveReasoning(model, reasoningOverride);
   const dispatch = (budget: number) => ctx.modelRegistry.streamSimple(model, {
     systemPrompt: profile.systemPrompt,
     messages,
     tools: [outputTool],
   }, {
-    signal, reasoning: "low", maxTokens: budget, maxRetries: 0,
+    signal, maxRetries: 0,
+    ...(reasoning ? { reasoning } : {}),
+    maxTokens: budget,
     sessionId: brandCacheSessionId(ctx, modelRef, role), cacheRetention: "short",
   }).result();
   let response = await dispatch(maxTokens);
@@ -97,9 +123,9 @@ export async function requestStructured<T>(
   return { value: call.arguments as T, usage: response.usage };
 }
 
-export function generationRequest(ctx: ExtensionContext, modelRef: string): GenerationRequest {
+export function generationRequest(ctx: ExtensionContext, modelRef: string, reasoning?: BrandReasoning): GenerationRequest {
   return async (prompt, signal) => {
-    const result = await requestStructured<{ candidates: import("./types.ts").Candidate[] }>(ctx, modelRef, prompt, CANDIDATES, signal);
+    const result = await requestStructured<{ candidates: import("./types.ts").Candidate[] }>(ctx, modelRef, prompt, CANDIDATES, signal, "creative", reasoning);
     return { candidates: result.value.candidates, usage: result.usage };
   };
 }

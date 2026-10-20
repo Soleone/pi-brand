@@ -22,11 +22,11 @@ export async function prepareFeedback(
   if (changes) return { changes, beforeKey };
   ctx.ui.setStatus?.("brand", "Updating the naming brief from your feedback…");
   try {
-    const signal = ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    const signal = ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000);
     const response = await requestStructured<Partial<NamingContent>>(
       ctx, state.model,
       `Current brief:\n${formatBrief(namingContent(state))}\nUser feedback (interpret in context, not as a replacement brief):\n${text}`,
-      BRIEF_CHANGES, signal, "brief",
+      BRIEF_CHANGES, signal, "brief", state.reasoning,
     );
     return { changes: response.value, usage: response.usage, beforeKey };
   } finally { ctx.ui.setStatus?.("brand", undefined); }

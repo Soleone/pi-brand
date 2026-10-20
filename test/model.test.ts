@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { brandCacheSessionId, requestStructured } from "../src/model.ts";
+import { brandCacheSessionId, requestStructured, resolveReasoning } from "../src/model.ts";
 
 function context(response: unknown, available = true): ExtensionContext {
   return {
@@ -29,13 +29,13 @@ test("missing, malformed and truncated output cannot become candidates", async (
 });
 
 test("creative and worker have separate stable cache identities even on the same model", async () => {
-  const seen: { model: string; system: string; prompt: string; options: { sessionId: string; cacheRetention: string; maxTokens: number } }[] = [];
+  const seen: { model: string; system: string; prompt: string; options: { sessionId: string; cacheRetention: string; maxTokens: number; reasoning?: string } }[] = [];
   const ctx = {
     cwd: "/tmp/pi-brand-model-tests", isProjectTrusted: () => true,
     modelRegistry: {
-      find: (_provider: string, id: string) => ({ provider: "openai", id, maxTokens: 32000, contextWindow: 200000 }),
+      find: (_provider: string, id: string) => ({ provider: "openai", id, maxTokens: 32000, contextWindow: 200000, reasoning: true }),
       hasConfiguredAuth: () => true,
-      streamSimple: (model: { id: string }, request: { systemPrompt: string; messages: { content: string }[] }, options: { sessionId: string; cacheRetention: string; maxTokens: number }) => {
+      streamSimple: (model: { id: string }, request: { systemPrompt: string; messages: { content: string }[] }, options: { sessionId: string; cacheRetention: string; maxTokens: number; reasoning?: string }) => {
         seen.push({ model: model.id, system: request.systemPrompt, prompt: request.messages[0].content, options });
         return { result: async () => ({ stopReason: "toolUse", content: [{ type: "toolCall", id: "result", name: "submit_result", arguments: { names: ["Able"] } }], usage: { input: 1 } }) };
       },
@@ -58,6 +58,18 @@ test("creative and worker have separate stable cache identities even on the same
   assert.equal(seen[1].prompt, "web evidence");
   assert.equal(seen[0].options.maxTokens, 16000);
   assert.equal(seen[1].options.maxTokens, 12000);
+  assert.equal(seen[0].options.reasoning, "medium");
+  assert.equal(seen[1].options.reasoning, "medium");
+});
+
+test("reasoning follows pi's per-model default and an explicit brand override wins", () => {
+  const model = { provider: "openai", id: "one-model", reasoning: true };
+  const settings = { defaultThinkingLevel: "high" as const, modelThinkingLevels: { "openai/one-model": "xhigh" as const } };
+  assert.equal(resolveReasoning(model, undefined, settings), "xhigh");
+  assert.equal(resolveReasoning({ ...model, id: "other" }, undefined, settings), "high");
+  assert.equal(resolveReasoning(model, "low", settings), "low");
+  assert.equal(resolveReasoning(model, "off", settings), undefined);
+  assert.equal(resolveReasoning({ ...model, reasoning: false }, "high", settings), undefined);
 });
 
 test("a length stop gets one larger retry with an explicit tool instruction", async () => {
@@ -91,9 +103,10 @@ test("model requests reserve room for output and reject oversized input before d
     modelRegistry: {
       find: () => ({ provider: "test", id: "small", contextWindow: 1600, maxTokens: 4000 }),
       hasConfiguredAuth: () => true,
-      streamSimple: (_model: unknown, _context: unknown, options: { maxTokens: number }) => {
+      streamSimple: (_model: unknown, _context: unknown, options: { maxTokens: number; reasoning?: string }) => {
         dispatched++;
         assert.ok(options.maxTokens >= 800 && options.maxTokens < 1600);
+        assert.equal(options.reasoning, undefined);
         return { result: async () => ({ stopReason: "toolUse", content: [{ type: "toolCall", id: "one", name: "submit_result", arguments: { names: [] } }] }) };
       },
     },

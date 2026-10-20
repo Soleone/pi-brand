@@ -17,7 +17,8 @@ import { formatShortlist } from "./shortlist.ts";
 import { buildAvailabilityPrompt } from "./prompt.ts";
 import { formatScore, needsCheck, scoreFromSignals, type CollisionSignals } from "./scoring.ts";
 import { brandDocumentPaths, saveFeedbackDocument, saveShortlistDocument, addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, activeNames, removeLikes, selectNames, recordAvailability, recordRound, saveBrandState, setFinalists } from "./store.ts";
-import { type AvailabilityRecord, type BrandState, type Candidate, type FeedbackEntry, type NamingContent } from "./types.ts";
+import { type AvailabilityRecord, type BrandState, type Candidate, type FeedbackEntry, type NamingContent, isBrandReasoning, BRAND_REASONING_LEVELS } from "./types.ts";
+import { setSettingsProvider } from "./settings.ts";
 
 const CANDIDATE_SCHEMA = Type.Object({ name: Type.String({ maxLength: 60 }), flavor: Type.Optional(Type.String({ maxLength: 120 })), style: Type.Optional(Type.String({ maxLength: 60 })) });
 const SIGNALS_SCHEMA = {
@@ -142,7 +143,7 @@ function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckD
       throw lastError instanceof Error ? lastError : new Error("Web search failed or was blocked.");
     },
     assess: async (prompt, signal) => {
-      const response = await requestStructured<{ results: Awaited<ReturnType<CheckDependencies["assess"]>>["results"] }>(ctx, state.workerModel ?? state.model, prompt, ASSESSMENT_SCHEMA, signal, "worker");
+      const response = await requestStructured<{ results: Awaited<ReturnType<CheckDependencies["assess"]>>["results"] }>(ctx, state.workerModel ?? state.model, prompt, ASSESSMENT_SCHEMA, signal, "worker", state.workerReasoning);
       return { results: response.value.results, usage: response.usage };
     },
     fetch,
@@ -225,6 +226,7 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
 }
 
 export default function registerPiBrand(pi: ExtensionAPI): void {
+  setSettingsProvider(() => typeof pi.getSettings === "function" ? pi.getSettings() : {});
   const active = new Set<AbortController>();
   let busy = false;
   let resumeWorkspace: { sessionId: string; position: WorkspacePosition } | undefined;
@@ -234,11 +236,11 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
     active.add(controller);
     const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
     try {
-      if (state.reserve.length > 0 || ctx.mode !== "tui") return await takeBatch(state, generationRequest(ctx, state.model), signal);
+      if (state.reserve.length > 0 || ctx.mode !== "tui") return await takeBatch(state, generationRequest(ctx, state.model, state.reasoning), signal);
       const result = await ctx.ui.custom<{ candidates?: Candidate[]; error?: Error }>((tui, theme, _keys, done) => {
-        const loader = new BorderedLoader(tui, theme, `Generating a ranked pool with ${state.model} (45s maximum)...`);
+      const loader = new BorderedLoader(tui, theme, `Generating a ranked pool with ${state.model} (5 min maximum)...`);
         loader.onAbort = () => controller.abort(new Error("Name generation cancelled"));
-        takeBatch(state, generationRequest(ctx, state.model), signal).then(
+        takeBatch(state, generationRequest(ctx, state.model, state.reasoning), signal).then(
           (candidates) => done({ candidates }),
           (error) => done({ error: error instanceof Error ? error : new Error(String(error)) }),
         );
@@ -256,6 +258,8 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       if (state.model !== selected.model) { state.reserve = []; state.reservePoolId = undefined; }
       state.model = selected.model;
       state.workerModel = selected.workerModel;
+      state.reasoning = selected.reasoning;
+      state.workerReasoning = selected.workerReasoning;
     });
     ctx.ui.notify("Brand models saved. Main model unchanged; cached checks retained.", "info");
   }
@@ -607,6 +611,18 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           return;
         }
         if (command === "round") { const text = roundDetails(run.state, tail || undefined); if (ctx.hasUI) await ctx.ui.editor("Saved generation inputs · read only", text); else ctx.ui.notify(text, "info"); return; }
+        if (command === "reasoning" || command === "worker-reasoning") {
+          const worker = command === "worker-reasoning";
+          const run = load(ctx);
+          if (!tail) {
+            ctx.ui.notify(`Creative reasoning: ${run.state.reasoning ?? "default from pi"}\nWorker reasoning: ${run.state.workerReasoning ?? "default from pi"}\nUsage: /brand reasoning <default|off|${BRAND_REASONING_LEVELS.join("|")}> or /brand worker-reasoning <...>`, "info");
+            return;
+          }
+          const value = tail === "default" ? undefined : tail;
+          if (value !== undefined && !isBrandReasoning(value)) throw new Error(`Reasoning must be default, off, or one of: ${BRAND_REASONING_LEVELS.join(", ")}.`);
+          await mutate(ctx, (state) => { if (worker) state.workerReasoning = value; else state.reasoning = value; });
+          ctx.ui.notify(`${worker ? "Worker" : "Creative"} reasoning: ${value ?? "default from pi"}. Applies to the next brand request.`, "info"); return;
+        }
         if (command === "model" || command === "worker") {
           if (command !== "worker" || tail !== "same") validateBrandModel(ctx, tail);
           await mutate(ctx, (state) => {
@@ -721,7 +737,7 @@ const HELP = [
   "/brand shortlist  export favorites with saved findings and sources; no new research",
   "/brand check [name, name|refresh]  check selected favorites; no promotion required",
   "/brand evidence <name>  retained sources and findings, not legal clearance",
-  "Settings and diagnostics: /brand settings · stats · words single|multiple · length <3-30> · domains <suffixes> · packages on|off",
+  "Settings and diagnostics: /brand settings · stats · reasoning|worker-reasoning <default|off|level> · words single|multiple · length <3-30> · domains <suffixes> · packages on|off",
   "Advanced: /brand screen · screened · model <provider/id> · worker <provider/id|same> · keep <names> · dismiss <names> · excluded · clear",
   "Compatibility: note = feedback · overview/status = resume · likes · finalists [names]",
   "Run data, brief and feedback stay outside the project; /brand stats shows their paths.",

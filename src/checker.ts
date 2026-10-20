@@ -236,7 +236,7 @@ export async function checkFinalists(
     timer = setTimeout(() => {
       timedOut = true;
       controller.abort(new Error("Availability check exceeded its time budget. Retry the failed names."));
-    }, options.timeoutMs ?? 45_000);
+    }, options.timeoutMs ?? 180_000);
   });
   const run = async () => {
     const pending: { name: string; evidence: AvailabilityEvidence[]; warnings: string[]; previous?: AvailabilityRecord }[] = [];
