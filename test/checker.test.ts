@@ -21,11 +21,12 @@ function fixture() {
 
 test("learning collision searches use several category-specific query angles", () => {
   const queries = buildCollisionSearchQueries("Mindpop", "an app for learning or retaining information");
-  assert.equal(queries.length, 2);
-  assert.match(queries[0], /Mindpop.*learning or retaining information/);
-  assert.match(queries[1], /learning education study flashcards vocabulary memory retention quiz knowledge/);
-  assert.match(queries[1], /Mindpop.*facts trivia game puzzle app software company/);
-  assert.doesNotMatch(buildCollisionSearchQueries("Ledger", "an accounting app")[1], /flashcards|vocabulary/);
+  assert.equal(queries.length, 3);
+  assert.equal(queries[0], '"Mindpop"');
+  assert.match(queries[1], /Mindpop.*learning or retaining information/);
+  assert.match(queries[2], /learning education study flashcards vocabulary memory retention quiz knowledge/);
+  assert.match(queries[2], /Mindpop.*facts trivia game puzzle app software company/);
+  assert.doesNotMatch(buildCollisionSearchQueries("Ledger", "an accounting app")[2], /flashcards|vocabulary/);
 });
 
 test("one operation batches assessment, caches findings and never mutates caller state", async () => {
@@ -41,6 +42,20 @@ test("one operation batches assessment, caches findings and never mutates caller
   assert.deepEqual(calls, { search: 3, assess: 1, fetch: 6 });
   assert.equal(cached.cached.length, 3);
   assert.equal(cached.records.able.checkedAt, result.records.able.checkedAt);
+});
+
+test("changing the product or lookup requirements refreshes cached findings automatically", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.finalists = ["Able"];
+  state.availability = (await checkFinalists(state, "deep", dependencies)).records;
+  state.product = "a different product";
+  const changedProduct = await checkFinalists(state, "deep", dependencies);
+  assert.deepEqual(changedProduct.cached, []);
+  assert.equal(calls.search, 2);
+  state.availability = changedProduct.records;
+  state.brief.domains = ["com"];
+  assert.deepEqual((await checkFinalists(state, "deep", dependencies)).cached, []);
+  assert.equal(calls.search, 3);
 });
 
 test("legacy scores remain authoritative until explicit refresh", async () => {
@@ -82,7 +97,7 @@ test("current and legacy unknowns are retried rather than treated as completed a
   }
 });
 
-test("an inconclusive screen without evidence retries search on the next check", async () => {
+test("a failed screen retries search on the next check", async () => {
   const { state, calls, dependencies } = fixture();
   state.finalists = ["Able"];
   let offline = true;
@@ -92,7 +107,7 @@ test("an inconclusive screen without evidence retries search on the next check",
     return search(name, signal);
   };
   state.availability = (await checkFinalists(state, "screen", dependencies)).records;
-  assert.equal(state.availability.able.score, "unknown");
+  assert.equal(state.availability.able.score, "error");
   assert.deepEqual(state.availability.able.evidence, []);
   assert.equal(calls.search, 1);
   const deep = await checkFinalists(state, "deep", dependencies);
@@ -104,12 +119,105 @@ test("screen upgrade reuses web evidence and avoids repeated search or classific
   const { state, calls, dependencies } = fixture();
   state.finalists = ["Able"];
   state.availability = (await checkFinalists(state, "screen", dependencies)).records;
-  assert.equal(state.availability.able.score, "unknown");
+  assert.equal(state.availability.able.score, "perfect");
   assert.equal(calls.fetch, 0);
   const deep = await checkFinalists(state, "deep", dependencies);
   assert.deepEqual(calls, { search: 1, assess: 1, fetch: 2 });
   assert.equal(deep.records.able.stage, "deep");
   assert.equal(deep.records.able.score, "perfect");
+});
+
+test("missing parking evidence does not invalidate a completed collision check", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.finalists = ["Able"];
+  const assess = dependencies.assess;
+  dependencies.assess = async (prompt, signal) => {
+    const response = await assess(prompt, signal);
+    response.results[0].comParked = null;
+    return response;
+  };
+  state.availability = (await checkFinalists(state, "screen", dependencies)).records;
+  assert.equal(state.availability.able.score, "perfect");
+  dependencies.assess = assess;
+  const deep = await checkFinalists(state, "deep", dependencies);
+  assert.equal(deep.records.able.score, "perfect");
+  assert.deepEqual(calls, { search: 1, assess: 1, fetch: 2 });
+});
+
+test("no observed collisions is a bounded negative finding, not an unknown result", async () => {
+  const { state, dependencies } = fixture();
+  state.finalists = ["Able"];
+  dependencies.assess = async () => ({ results: [{
+    name: "Able", reason: "No named use established", sourceUrls: ["https://example.com/Able"],
+    famousCollision: null, sameSpaceCollision: null, giantAssociation: null, unrelatedCount: null, comParked: null,
+  }] });
+  const record = (await checkFinalists(state, "deep", dependencies)).records.able;
+  assert.equal(record.score, "perfect");
+  assert.deepEqual(record.signals, { famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: false });
+  assert.equal(record.searchQueries?.[0], '"Able"');
+  assert.match(record.reason, /No named use established/);
+});
+
+test("successful zero-hit searches are clear without paying for an assessment", async () => {
+  const { state, calls, dependencies } = fixture();
+  dependencies.search = async () => { calls.search++; return []; };
+  const result = await checkFinalists(state, "screen", dependencies);
+  assert.deepEqual(calls, { search: 3, assess: 0, fetch: 0 });
+  assert.equal(result.records.able.score, "perfect");
+  assert.match(result.records.able.reason, /Search completed with no results/);
+  assert.equal(result.records.able.searchQueries?.length, 3);
+});
+
+test("review is reserved for cited ambiguity and does not create a pending-check loop", async () => {
+  const { state, calls, dependencies } = fixture();
+  state.finalists = ["Able"];
+  const assess = dependencies.assess;
+  dependencies.assess = async (prompt, signal) => {
+    const response = await assess(prompt, signal);
+    return { results: response.results.map(item => ({ ...item, needsReview: true, reason: "An Able product exists, but its audience is unclear." })) };
+  };
+  state.availability = (await checkFinalists(state, "screen", dependencies)).records;
+  assert.equal(state.availability.able.score, "review");
+  const deep = await checkFinalists(state, "deep", dependencies);
+  assert.equal(deep.records.able.score, "review");
+  state.availability = deep.records;
+  const cached = await checkFinalists(state, "deep", dependencies);
+  assert.deepEqual(cached.cached, ["Able"]);
+  assert.equal(calls.assess, 1);
+});
+
+test("missing and duplicate worker results are per-name errors, not a failed whole batch", async () => {
+  const { state, dependencies } = fixture();
+  const assess = dependencies.assess;
+  dependencies.assess = async (prompt, signal) => {
+    const response = await assess(prompt, signal);
+    return { results: [response.results[0], response.results[1], response.results[1]] };
+  };
+  const result = await checkFinalists(state, "screen", dependencies);
+  assert.equal(result.records.able.score, "perfect");
+  assert.equal(result.records.bold.score, "error");
+  assert.match(result.records.bold.reason, /duplicate/);
+  assert.equal(result.records.calm.score, "error");
+});
+
+test("one failed search does not discard successful checks in the batch", async () => {
+  const { state, dependencies } = fixture();
+  const search = dependencies.search;
+  dependencies.search = (name, signal) => name === "Bold" ? Promise.reject(new Error("offline")) : search(name, signal);
+  const result = await checkFinalists(state, "screen", dependencies);
+  assert.equal(result.records.able.score, "perfect");
+  assert.equal(result.records.bold.score, "error");
+  assert.equal(result.records.calm.score, "perfect");
+});
+
+test("a deadline preserves cached results and errors only unfinished names", async () => {
+  const { state, dependencies } = fixture();
+  state.availability.able = { score: "good", reason: "cached", checkedAt: "2026-01-01", stage: "deep" };
+  dependencies.search = () => new Promise(() => {});
+  const result = await checkFinalists(state, "deep", dependencies, { timeoutMs: 20 });
+  assert.equal(result.records.able.score, "good");
+  assert.equal(result.records.bold.score, "error");
+  assert.deepEqual(result.cached, ["Able"]);
 });
 
 test("decisive collisions skip domain and package lookups", async () => {
@@ -159,10 +267,12 @@ test("clear learning and knowledge products override unsupported worker judgment
   assert.equal(calls.fetch, 0);
 });
 
-test("search failures, unsupported judgments and HTTP failures stay unknown", async () => {
+test("research failures are errors; optional registry failures do not erase collision findings", async () => {
   const { state, dependencies } = fixture();
   dependencies.search = async () => { throw new Error("network unavailable"); };
-  assert.equal((await checkFinalists(state, "screen", dependencies)).records.able.score, "unknown");
+  const failed = (await checkFinalists(state, "screen", dependencies)).records.able;
+  assert.equal(failed.score, "error");
+  assert.match(failed.reason, /network unavailable/);
   const fixture2 = fixture();
   const original = fixture2.dependencies.assess;
   fixture2.dependencies.assess = async (prompt, signal) => {
@@ -170,10 +280,12 @@ test("search failures, unsupported judgments and HTTP failures stay unknown", as
     response.results.forEach((item) => { item.sourceUrls = ["https://invented.invalid/"]; item.sameSpaceCollision = true; });
     return response;
   };
-  assert.equal((await checkFinalists(fixture2.state, "screen", fixture2.dependencies)).records.able.score, "unknown");
+  assert.equal((await checkFinalists(fixture2.state, "screen", fixture2.dependencies)).records.able.score, "error");
   const fixture3 = fixture();
   fixture3.dependencies.fetch = (async () => new Response(null, { status: 429 })) as typeof fetch;
-  assert.equal((await checkFinalists(fixture3.state, "deep", fixture3.dependencies)).records.able.score, "unknown");
+  const partial = (await checkFinalists(fixture3.state, "deep", fixture3.dependencies)).records.able;
+  assert.equal(partial.score, "perfect");
+  assert.match(partial.warnings!.join("\n"), /domain\/package lookups failed/);
 });
 
 test("finalist cap, deadline and cancellation bound hung dependencies", async () => {
@@ -183,7 +295,9 @@ test("finalist cap, deadline and cancellation bound hung dependencies", async ()
   state.finalists = ["Able"];
   let signal: AbortSignal | undefined;
   dependencies.search = (_name, current) => { signal = current; return new Promise(() => {}); };
-  await assert.rejects(checkFinalists(state, "deep", dependencies, { timeoutMs: 20 }), /budget/);
+  const timedOut = await checkFinalists(state, "deep", dependencies, { timeoutMs: 20 });
+  assert.equal(timedOut.records.able.score, "error");
+  assert.match(timedOut.records.able.reason, /timed out/);
   assert.equal(signal?.aborted, true);
   const controller = new AbortController();
   controller.abort(new Error("cancelled"));
@@ -244,6 +358,6 @@ test("worker sees bounded cited excerpts only, never creative taste or full sear
   assert.ok(assessmentPrompt.length < 14000);
   assert.ok(!assessmentPrompt.includes("PRIVATE_CREATIVE_DIRECTION"));
   assert.ok(!assessmentPrompt.includes("PRIVATE_TASTE"));
-  assert.equal(result.records.able.score, "unknown");
+  assert.equal(result.records.able.score, "error");
   assert.equal(result.records.able.evidence?.length, 6);
 });

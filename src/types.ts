@@ -40,6 +40,8 @@ export interface AvailabilityRecord {
   /** Checker research rules that produced this record. */
   researchVersion?: number;
   evidence?: AvailabilityEvidence[];
+  /** Exact queries used, including for successful searches with no hits. */
+  searchQueries?: string[];
   warnings?: string[];
   /** A fingerprint of requirements, not a claim of timeless availability. */
   requirementsKey?: string;

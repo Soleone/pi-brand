@@ -12,11 +12,13 @@ The canonical naming document and human feedback history live beside it as `<ste
 
 Canonical paths keep symlinked checkouts on the same run; unrelated projects sharing a basename remain isolated. Writes use atomic replacement and private permissions. Brief updates verify the document has not changed since loading it. A direct edit observed while an isolated feedback request is in flight is not overwritten. Independent Pi processes should still not write the same run simultaneously.
 
+An explicit shortlist export creates `<stem>.shortlist.md` beside the run file. It is a replaceable, shareable snapshot, not a source of truth. Export never performs research or changes the naming brief, favorites or evidence.
+
 ## Sources of truth
 
 - **Naming brief:** the Markdown document is authoritative. Its six sections are Product, Explore, Avoid, Style, Examples, and Format. Reading imports valid direct edits into the active context; the next mutation records their new revision. Invalid or oversized inputs are reported rather than silently truncated or reset.
 - **Feedback:** JSON retains original comments, source, author, before/after context, actual changes, and interpretation failures. The Markdown history is an editable reference document. Your annotations survive subsequent appended entries. Annotating it does not automatically alter active generation instructions; update the brief to do that.
-- **Generation:** version 4 JSON retains immutable pool inputs and exact prompts, linked to viewed rounds. Pools distinguish generated and externally supplied candidates. Older records explicitly lack provenance. Favorites and cached evidence remain structured run data. `selected` holds active names; `liked` holds favorites, a subset. `dismissed` removes names from active membership without deleting rounds or evidence. Manually added names persist in `selected` without a synthetic round; checks and favorites attach to those names normally.
+- **Generation:** version 4 JSON retains immutable pool inputs and exact prompts, linked to viewed rounds. Pools distinguish generated and externally supplied candidates. Older records explicitly lack provenance. Favorites and cached evidence remain structured run data. Checks retain exact search queries, sources, findings and original check timestamps. New research failures use `error`; cited ambiguities use `review`. Existing score codes and legacy `unknown` records remain readable, with incomplete legacy findings eligible for a fresh check. `selected` holds active names; `liked` holds favorites, a subset. `dismissed` removes names from active membership without deleting rounds or evidence. Manually added names persist in `selected` without a synthetic round; checks and favorites attach to those names normally.
 
 ## Migration
 

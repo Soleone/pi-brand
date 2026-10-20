@@ -1,11 +1,13 @@
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { isCheckStale } from "./checker.ts";
 import { availabilityKey, getAvailability } from "./store.ts";
+import { compareScores, formatScore, needsCheck, SCORE_INFO } from "./scoring.ts";
 import type { BrandState, Candidate } from "./types.ts";
 import type { WorkspaceAction } from "./workspace.ts";
 
 export interface FavoriteChange { name: string; roundId?: string; liked: boolean }
-export interface WorkspacePosition { tab: "names" | "favorites" | "history"; cursor: number; roundId?: string; query?: string; marked?: string[]; focusName?: string }
+export interface WorkspacePosition { tab: "names" | "favorites" | "history"; cursor: number; roundId?: string; query?: string; marked?: string[]; focusName?: string; notice?: string; sort?: "recent" | "best" }
 type ScreenAction = WorkspaceAction | { kind: "edit-brief" } | { kind: "annotations" } | { kind: "inputs" } | { kind: "settings" };
 export interface WorkspaceScreenResult { action?: ScreenAction; favoriteChanges: FavoriteChange[] }
 
@@ -30,7 +32,8 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
     const selectedNames = new Set(state.selected.map(availabilityKey));
     const discarded = new Set(state.dismissed.map(availabilityKey));
     const marked = new Set(position.marked ?? []);
-    let notice = "";
+    let notice = position.notice ?? "";
+    delete position.notice;
     let screen: "list" | "detail" | "brief" | "generate" | "similar" = "list";
     let searching = false;
     let focused = false;
@@ -44,11 +47,16 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
     };
     const rounds = [...state.rounds].reverse();
     const activeRound = () => state.rounds.find(round => round.id === position.roundId) ?? state.rounds.at(-1);
+    const assessmentScore = (entry: Candidate): Candidate["score"] => {
+      const record = getAvailability(state, entry.name);
+      return isCheckStale(record, state) ? "unknown" : record?.score ?? entry.score;
+    };
     const entries = () => {
       const known = new Map([...rounds.flatMap(round => round.candidates), ...state.liked].map(entry => [availabilityKey(entry.name), entry]));
       for (const name of state.selected) if (!known.has(availabilityKey(name))) known.set(availabilityKey(name), { name });
       const source = position.tab === "names" && position.roundId ? activeRound()?.candidates ?? [] : [...known.values()].filter(entry => (position.tab === "favorites" ? favorites : selectedNames).has(availabilityKey(entry.name)));
-      return source.filter(entry => `${entry.name} ${entry.flavor ?? ""}`.toLocaleLowerCase().includes(input.getValue().toLocaleLowerCase()));
+      const filtered = source.filter(entry => `${entry.name} ${entry.flavor ?? ""}`.toLocaleLowerCase().includes(input.getValue().toLocaleLowerCase()));
+      return position.sort === "best" ? filtered.sort((a, b) => compareScores(assessmentScore(a) ?? "unknown", assessmentScore(b) ?? "unknown")) : filtered;
     };
     const focusName = position.focusName;
     if (focusName) {
@@ -67,15 +75,12 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
     const setTab = (tab: WorkspacePosition["tab"]) => {
       position.tab = tab; position.cursor = 0; position.roundId = undefined; input.setValue(""); searching = false; marked.clear(); notice = "";
     };
-    const needsCheck = (entry: Candidate) => {
-      const score = getAvailability(state, entry.name)?.score ?? entry.score;
-      return !score || score === "unknown";
-    };
+    const isPending = (entry: Candidate) => needsCheck(assessmentScore(entry));
     const paint = (width: number): string[] => {
       const fg = (color: Parameters<Theme["fg"]>[0], text: string) => theme.fg(color, text);
       const remaining = [...changes.values()].some(change => change.liked !== state.liked.some(entry => availabilityKey(entry.name) === availabilityKey(change.name))) ? 0 : state.reserve.length;
       const rule = fg("borderMuted", "─".repeat(Math.max(0, width)));
-      const lines = [` ${fg("accent", theme.bold(" Brand"))}  ${fg("dim", `${selectedNames.size} selected · ${favorites.size} favorites · Brief r${state.briefRevision}`)}`];
+      const lines = [` ${fg("accent", theme.bold(" Brand"))}  ${fg("dim", `${selectedNames.size} selected · ${favorites.size} ${favorites.size === 1 ? "favorite" : "favorites"} · Brief r${state.briefRevision}`)}`];
       if (screen === "list") {
         lines.push(" " + ([ ["names", "Names"], ["favorites", " Favorites"], ["history", " History"] ] as const).map(([tab, label]) => position.tab === tab ? fg("accent", theme.bold(`[${label}]`)) : fg("muted", label)).join("   "), rule);
         if (searching || input.getValue()) lines.push(...input.render(Math.max(1, width)));
@@ -94,29 +99,32 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           const start = Math.max(0, position.cursor - PAGE_SIZE + 1);
           const nameWidth = nameColumnWidth(rows, width);
           const assessment = width >= 20;
-          lines.push(fg("dim", `  ${nameCell("NAME", nameWidth)}${assessment ? "    ASSESSMENT" : ""}`));
+          lines.push(fg("dim", `  ${nameCell("NAME", nameWidth)}${assessment ? "    ASSESSMENT" : ""}${position.sort === "best" ? " · Best first" : ""}`));
           for (const [index, entry] of rows.slice(start, start + PAGE_SIZE).entries()) {
             const active = start + index === position.cursor;
-            const record = getAvailability(state, entry.name);
-            const score = record?.score ?? entry.score;
-            const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" ? "error" : score === "decent" ? "warning" : "muted";
+            const score = assessmentScore(entry);
+            const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" || score === "error" ? "error" : score === "decent" || score === "review" ? "warning" : "muted";
             const key = availabilityKey(entry.name);
             const favorite = favorites.has(key) ? fg("warning", "") : discarded.has(key) ? fg("dim", "") : " ";
-            const status = score ? `${score === "unknown" ? "" : ""} ${score}` : "—";
+            const status = score ? `${score === "unknown" || score === "review" ? "" : ""} ${formatScore(score)}` : "—";
             const mark = marked.has(key) ? fg("accent", "") : " ";
             const name = nameCell(entry.name, nameWidth);
             lines.push(`${mark} ${active ? fg("accent", theme.bold(name)) : discarded.has(key) ? fg("dim", name) : name} ${favorite}${assessment ? `  ${fg(color, status)}` : ""}`);
           }
           if (!rows.length) lines.push(fg("muted", input.getValue() ? " No matches. / to change search; Esc clears it." : position.tab === "favorites" ? " No favorites yet. Press f on a name to star it." : " No names yet. Press g to prepare generation."));
+          if (position.tab === "favorites" && rows.length) lines.push(fg("dim", " e Export shortlist with findings and sources · no new research"));
           if (rows.length > PAGE_SIZE) lines.push(fg("dim", ` ${start + 1}–${Math.min(start + PAGE_SIZE, rows.length)} of ${rows.length}`));
           if (position.tab === "names" && position.roundId && activeRound()) lines.push(fg("dim", ` History: ${activeRound()!.id} · ${activeRound()!.origin ?? "legacy"} · brief r${activeRound()!.briefRevision ?? "?"}`));
-          const checkActions = marked.size ? `${marked.size} marked · c Check marked · Shift+C Recheck marked · d Discard marked` : `c Check pending (${rows.filter(needsCheck).length}) · Shift+C Recheck all (${rows.length})`;
+          const checkActions = marked.size ? `${marked.size} marked · c Check marked · Shift+C Recheck marked · d Discard marked` : `c Check pending (${rows.filter(isPending).length}) · Shift+C Recheck all (${rows.length})`;
           lines.push(...wrapTextWithAnsi(checkActions, Math.max(1, width - 2)).map(line => fg("muted", ` ${line}`)));
+          if (rows.some(entry => getAvailability(state, entry.name)?.score === "unknown")) {
+            lines.push(...wrapTextWithAnsi("Older incomplete results need a fresh check. Press c to update them.", Math.max(1, width - 2)).map(line => fg("warning", ` ${line}`)));
+          }
         }
-        if (notice) lines.push(fg("warning", ` ${notice}`));
+        if (notice) lines.push(...wrapTextWithAnsi(notice, Math.max(1, width - 2)).map(line => fg("warning", ` ${line}`)));
         lines.push(rule);
         for (const hint of [
-          position.tab === "history" ? " Tab/←→ screens · ↑↓ move · Enter open round · Esc back" : " Tab/←→ screens · ↑↓ move · Enter details · Space mark · a mark all",
+          position.tab === "history" ? " Tab/←→ screens · ↑↓ move · Enter open round · Esc back" : " Tab/←→ tabs · ↑↓ move · Enter details · Space mark · a all · s sort",
           position.tab === "history" ? " b brief · g generate" : ` f ${marked.size ? "favorite marked" : "favorite"} · d discard · / search · n add · b brief · g generate · Esc back`,
         ]) lines.push(...wrapTextWithAnsi(fg("dim", hint), Math.max(1, width)));
       } else if (screen === "brief") {
@@ -157,16 +165,19 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           else content.push(...wrapped.map((line, index) => `${fg("muted", nameCell(index === 0 ? label : "", 13))}${line}`));
         };
         const score = record?.score ?? detail.score;
-        const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" ? "error" : score === "decent" ? "warning" : "muted";
-        field("Availability", score ? fg(color, score) : "Not checked");
-        if (record?.model) field("Model", record.model);
-        if (record) field("Checked", `${record.stage === "screen" ? "Quick screen" : record.stage === "deep" ? "Deep check" : "Legacy"} · ${record.checkedAt}`);
+        const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" || score === "error" ? "error" : score === "decent" || score === "review" ? "warning" : "muted";
+        field("Availability", isCheckStale(record, state) ? fg("warning", `Outdated · ${formatScore(score)}`) : score ? fg(color, formatScore(score)) : "Not checked");
         const reason = record?.reason ?? detail.scoreReason;
         if (reason) field("Finding", reason);
+        if (isCheckStale(record, state)) field("Next step", "Product or lookup requirements changed. Press c to update this finding.");
+        else if (score) field("Next step", SCORE_INFO[score].nextStep);
+        if (record?.model) field("Model", record.model);
+        if (record) field("Checked", `${record.stage === "screen" ? "Quick screen" : record.stage === "deep" ? "Deep check" : "Legacy"} · ${record.checkedAt}`);
         for (const warning of record?.warnings ?? []) field("Warning", fg("warning", warning));
         if (record) {
           content.push("");
           field("Evidence", record.evidence?.length ? `${record.evidence.length} ${record.evidence.length === 1 ? "source" : "sources"}` : "No retained sources");
+          for (const query of record.searchQueries ?? []) field("Search", query);
           for (const source of record.evidence ?? []) {
             field(source.source, source.detail);
             field("", fg("dim", source.url));
@@ -177,7 +188,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
         if (content.length > 10) lines.push(fg("dim", ` ${detailScroll + 1}–${Math.min(detailScroll + 10, content.length)} of ${content.length} · ↑↓ scroll`));
         if (record || score) lines.push("", ...wrapTextWithAnsi(fg("dim", "Preliminary findings, not trademark clearance."), contentWidth).map(line => ` ${line}`));
         lines.push("", fg("borderMuted", "─".repeat(Math.min(width, 88))));
-        const actions: [string, string][] = [["Space", saved ? "Remove favorite" : "Save favorite"], ["c", "Check availability"], ["m", "More like this"], ["?", detailActions ? "Fewer actions" : "More actions"]];
+        const actions: [string, string][] = [["Space", saved ? "Remove favorite" : "Save favorite"], ["c", score === "error" ? "Retry check" : "Check availability"], ["m", "More like this"], ["?", detailActions ? "Fewer actions" : "More actions"]];
         if (detailActions) actions.push(["r", "Refresh check"], ["x", "Quick screen"], ["d", "Discard name"]);
         if (!selectedNames.has(availabilityKey(detail.name))) actions.push(["s", "Restore to list"]);
         actions.push(["Esc", "Back"]);
@@ -244,11 +255,18 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           else if (data === "g") screen = "generate";
           else if (data === "b") { screen = "brief"; detailScroll = 0; }
           else if ((data === "c" || forceCheck) && position.tab !== "history") {
-            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : forceCheck || needsCheck(entry));
+            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : forceCheck || isPending(entry));
             if (targets.length) {
               finish({ kind: "check", names: targets.map(entry => entry.name), stage: "deep", refresh: forceCheck, batch: true, uncheckedOnly: !marked.size && !forceCheck }); return;
             }
-            notice = "No unchecked or unknown names in this list.";
+            notice = "No pending checks. Enter reads findings; Shift+C rechecks explicitly.";
+          } else if (data === "s" && position.tab !== "history") {
+            const name = selected()?.name;
+            position.sort = position.sort === "best" ? "recent" : "best";
+            position.cursor = Math.max(0, entries().findIndex(entry => entry.name === name));
+            notice = position.sort === "best" ? "Best findings first. Unchecked and failed names follow assessed names." : "Recent order restored.";
+          } else if (data === "e" && position.tab === "favorites") {
+            finish({ kind: "export" }); return;
           } else if (data === "a" && position.tab !== "history") {
             const rows = entries();
             if (rows.length && rows.every(entry => marked.has(availabilityKey(entry.name)))) marked.clear();

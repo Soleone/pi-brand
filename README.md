@@ -22,7 +22,8 @@ Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability che
 4. **g** prepares generation: see whether the next batch uses the reserve or a new model call, then explicitly start with Enter.
 5. **n** adds your own name to the list and focuses it. **Enter**, then **c**, checks just that name. Adding alone does no research or favoriting.
 6. **b** reveals the otherwise hidden brief. **e** edits it; **f** gives AI-interpreted feedback. Feedback returns to browsing, not automatic generation.
-6. `/brand` resumes without generating. Name details expose evidence, direct check actions and similar-name refinement. Check shortcuts start immediately; no finalist promotion is needed.
+7. **c** checks pending names; **s** switches between recent and best-first order. In Favorites, **e** exports a shortlist with saved findings and sources, without new research.
+8. `/brand` resumes without generating. Name details expose evidence, suggested next steps, direct check actions and similar-name refinement. Check shortcuts start immediately; no finalist promotion is needed.
 
 **New → Selected → Favorite** is the naming lifecycle; bulk checkboxes are separate. New is transient during generation, Selected means membership in the active list, and Favorite is a starred active name. **d** discards highlighted/marked names after confirmation. Discarded names leave the active list but remain in History and duplicate exclusions. Closing never deletes or rewrites a round. **More like this** (`m` in name details) prepares a brief refinement without silently favoriting the reference.
 
@@ -50,11 +51,15 @@ Default naming does **no availability research**. See [budgets and caching](docs
 
 ## Check names when ready
 
-**c Check pending** immediately checks every unassessed or inconclusive (**unknown**) name in the current filtered list, so an inconclusive result is not stuck. With bulk marks, it checks marked names instead, reusing conclusive assessments and retrying unknowns. **Shift+C Recheck all** forces fresh checks of the list, or marked names, with the current worker model. There is no extra confirmation screen; progress appears while checks run in batches of three. The list returns automatically with updated results, preserving your tab, filter, cursor and marks. Checking never promotes names to favorites.
+**c Check pending** checks unchecked, failed, outdated or legacy-incomplete names in the current filtered list. With bulk marks, it checks marked names instead, reusing completed findings. **Shift+C Recheck all** forces fresh checks with the current worker model. There is no extra confirmation screen; progress stays visible until batch results are saved. The refreshed list shows how many were assessed, need review or failed, preserving your tab, filter, cursor and marks. Checking never promotes names to favorites.
 
-Name details also expose individual checks, refresh and quick screen. `/brand check <name>, <name>` checks up to three saved names; `/brand check all` checks pending active names (unassessed or unknown); `/brand check all refresh` rechecks the active list. Failed refreshes retain previous assessments.
+Results say **clear / light usage / some overlap / crowded / collision**. A successful search with no hits or no observed collisions is useful preliminary evidence, not an unknown result. **Needs review** means a specific cited potential collision is ambiguous. **Check failed** means research could not complete, with a reason and retry action. A partial provider failure is not silently treated as a clean search. Optional registry failures remain visible without erasing the collision finding.
 
-Results use `perfect / good / decent / bad / terrible`, or **unknown** when evidence is incomplete. They retain reasons, URLs, excerpts, and timestamps. `/brand evidence <name>` shows them. These are preliminary collision findings, **not trademark clearance**. A registry “no record found” is not a promise that a domain is registrable or affordable.
+Name details include a suggested next step, exact search queries, sources, dates and individual refresh actions. `/brand evidence <name>` reads them. `/brand check all` retries pending active names; `/brand check all refresh` explicitly rechecks all. Changed product/domain/package requirements make old findings pending again. Failed refreshes retain previous evidence and its original timestamp.
+
+**s** puts the best findings first without losing focus or marks. **e** in Favorites, or `/brand shortlist`, exports a shareable Markdown snapshot of favorites, findings, next steps and sources. Export performs no new research.
+
+These are preliminary collision findings, **not trademark clearance**. “Clear” does not prove a name is unused. A registry “no record found” does not promise that a domain is registrable or affordable. Saved score codes remain compatible; old `unknown` findings are labeled **recheck needed** until checked again.
 
 ## Storage stays outside your project
 
@@ -84,9 +89,10 @@ The workspace covers normal use. Command equivalents:
 /brand history           inspect/annotate feedback history
 /brand round [id]        inspect actual saved generation inputs
 /brand check [names]     select/check saved names
-/brand check all         check pending active names (unassessed or unknown)
+/brand check all         check unchecked, failed or outdated active names
 /brand check all refresh recheck all active names
 /brand evidence <name>   read retained findings
+/brand shortlist         export favorites and saved research as Markdown
 /brand settings          choose creative and optional worker models
 /brand stats             document paths and generation metrics
 /brand help              advanced commands and compatibility aliases

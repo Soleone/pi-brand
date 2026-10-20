@@ -1,11 +1,11 @@
 import { Type, type Usage } from "@earendil-works/pi-ai";
-import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
+import { needsCheck, scoreFromSignals, type CollisionSignals } from "./scoring.ts";
 import { availabilityKey, getAvailability } from "./store.ts";
 import type { AvailabilityEvidence, AvailabilityRecord, BrandState } from "./types.ts";
 
 const FLAG = Type.Union([Type.Boolean(), Type.Null()]);
 const MAX_ASSESSMENT_URL_LENGTH = 320;
-export const CHECK_RESEARCH_VERSION = 2;
+export const CHECK_RESEARCH_VERSION = 4;
 
 const LEARNING_PRODUCT = /\b(?:learn\w*|educat\w*|stud\w*|flashcard\w*|memor\w*|retain\w*|retention|knowledge|vocab\w*|vokabel\w*|quiz\w*|school|course|bildung|wissen\w*)\b/i;
 const LEARNING_SEARCH_TERMS = "learning education study flashcards vocabulary memory retention quiz knowledge facts trivia game puzzle";
@@ -19,16 +19,18 @@ export function buildCollisionSearchQueries(name: string, product: string): stri
   const productPhrase = clean(product, 120) || "app";
   const spaceTerms = LEARNING_PRODUCT.test(product) ? LEARNING_SEARCH_TERMS : productPhrase;
   return [
+    `"${brand}"`,
     `"${brand}" ${productPhrase} app`,
     `"${brand}" ${spaceTerms} app software company`,
   ];
 }
 
 export function shouldRefreshUnknown(record: AvailabilityRecord | undefined, stage: "screen" | "deep"): boolean {
-  if (!record || record.score !== "unknown") return false;
+  if (!record || !needsCheck(record.score)) return false;
   // A current screen with usable evidence can serve the deeper assessment without searching again.
   if (stage === "deep" && record.stage === "screen" && record.researchVersion === CHECK_RESEARCH_VERSION
-    && record.evidence?.some(entry => entry.source === "web")) return false;
+    && record.evidence?.some(entry => entry.source === "web")
+    && scoreFromSignals(record.signals ?? {}).score !== "unknown") return false;
   return true;
 }
 
@@ -77,17 +79,57 @@ function selectAssessmentEvidence(evidence: AvailabilityEvidence[], product: str
     .map(({ entry }) => entry);
 }
 export const ASSESSMENT_SCHEMA = Type.Object({ results: Type.Array(Type.Object({
-  name: Type.String(), reason: Type.String({ maxLength: 400 }),
+  name: Type.String({ minLength: 1 }), reason: Type.String({ minLength: 1, maxLength: 400 }),
   famousCollision: FLAG, sameSpaceCollision: FLAG, giantAssociation: FLAG,
   unrelatedCount: Type.Union([Type.Integer({ minimum: 0, maximum: 100 }), Type.Null()]),
   comParked: FLAG, sourceUrls: Type.Array(Type.String(), { maxItems: 6 }),
+  needsReview: Type.Boolean({ description: "True only for a specific cited potential collision whose relevance is genuinely ambiguous. False for missing evidence or no observed collisions." }),
 }), { maxItems: 3 }) });
 
-type Assessment = { name: string; reason: string; sourceUrls: string[] } & { [K in keyof CollisionSignals]: CollisionSignals[K] | null };
+type Assessment = { name: string; reason: string; sourceUrls: string[]; needsReview?: boolean } & { [K in keyof CollisionSignals]: CollisionSignals[K] | null };
 export interface CheckDependencies {
+  /** Resolve only completed searches: an empty array means verified zero hits. Reject research failures. */
   search: (name: string, signal: AbortSignal) => Promise<AvailabilityEvidence[]>;
   assess: (prompt: string, signal: AbortSignal) => Promise<{ results: Assessment[]; usage?: Usage }>;
   fetch: typeof fetch;
+}
+
+/** Validate search completion before interpreting an empty response as a useful finding. */
+export function readSearchEvidence(result: { content?: unknown; structuredContent?: unknown; details?: unknown }, expectedQueries: number): AvailabilityEvidence[] {
+  const structured = result.structuredContent as { queries?: { error?: string; results?: unknown[] }[] } | undefined;
+  if (Array.isArray(structured?.queries)) {
+    if (structured.queries.length !== expectedQueries) throw new Error("Search did not complete every requested query.");
+    for (const query of structured.queries) {
+      if (!query || typeof query !== "object") throw new Error("Search returned an unrecognized query format.");
+      if (query.error) throw new Error(`Search query failed: ${query.error}`);
+      if (!Array.isArray(query.results)) throw new Error("Search returned an unrecognized result format.");
+    }
+    const evidence = extractWebEvidence(structured.queries);
+    if (!evidence.length && structured.queries.some(query => query.results!.length)) throw new Error("Search returned results without usable source URLs.");
+    return evidence;
+  }
+  const details = result.details as { queryCount?: number; successfulQueries?: number; totalResults?: number } | undefined;
+  if (typeof details?.successfulQueries === "number" && details.successfulQueries < expectedQueries) throw new Error("One or more search queries failed. Retry the check.");
+  const blocks = Array.isArray(result.content) ? result.content : [];
+  const text = blocks.map(block => typeof block?.text === "string" ? block.text : "").join("\n");
+  if (/^\s*Error:/im.test(text)) throw new Error("Search reported a query error. Retry the check.");
+  for (const block of blocks) {
+    if (typeof block?.text !== "string") continue;
+    let parsed;
+    try { parsed = JSON.parse(block.text); } catch { continue; }
+    if (parsed?.error) throw new Error(`Search failed: ${String(parsed.error)}`);
+    if (Array.isArray(parsed?.queries)) return readSearchEvidence({ structuredContent: parsed }, expectedQueries);
+    if (Array.isArray(parsed?.results)) {
+      const evidence = extractWebEvidence(parsed.results);
+      if (parsed.results.length && !evidence.length) throw new Error("Search returned results without usable source URLs.");
+      return evidence;
+    }
+  }
+  const evidence = extractWebEvidence(result.content);
+  if (evidence.length) return evidence;
+  if (details?.successfulQueries === expectedQueries && details.totalResults === 0) return [];
+  if (text.trim() === "No results found.") return [];
+  throw new Error("Search returned no verifiable results. This is a research error, not an available name.");
 }
 
 /** Extract source-linked snippets rather than retaining an entire search transcript. */
@@ -126,6 +168,10 @@ function requirementsKey(state: BrandState): string {
   return JSON.stringify({ product: state.product, domains: state.brief.domains, packages: state.brief.checkPackages });
 }
 
+export function isCheckStale(record: AvailabilityRecord | undefined, state: BrandState): boolean {
+  return !!record?.requirementsKey && record.requirementsKey !== requirementsKey(state);
+}
+
 async function inspectUrl(url: string, source: AvailabilityEvidence["source"], signal: AbortSignal, fetcher: typeof fetch): Promise<AvailabilityEvidence> {
   const timeout = AbortSignal.timeout(5000);
   try {
@@ -149,7 +195,8 @@ function assessPrompt(state: BrandState, items: { name: string; evidence: Availa
   const excerpts = items.map((item) => ({ name: item.name, evidence: selectAssessmentEvidence(item.evidence, state.product)
     .map((entry) => ({ url: entry.url, detail: entry.detail.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").slice(0, 400) })) }));
   return [
-    "Assess naming collisions from supplied web excerpts only. Null means not established. Do not invent businesses, domains, sources, or legal conclusions.",
+    "Assess observed naming collisions from supplied web excerpts only. False (or null) means not observed in this search, not proof that no such use exists. Zero unrelatedCount means no identified unrelated uses. Do not invent businesses, domains, sources, or legal conclusions.",
+    "No exact-name matches, unrelated search results, or no observed collision is a useful negative finding, not a research failure. Set needsReview true only for a specific cited potential collision whose relevance is genuinely ambiguous; explain that ambiguity in reason. Missing parking or registration evidence is not an ambiguous collision.",
     "A package or repository alone is not a same-category collision. Distinguish unrelated famous brands from same-category uses. Count unrelated uses only if identified in evidence.",
     "When the named use clearly serves the product's broad user need, count it as same-space even if its format differs. For learning/retention products, vocabulary, mnemonic, spaced-repetition, quiz, fact-learning, and book-learning products are relevant. Require the excerpt to support the named use and activity; do not infer from the name alone.",
     "comParked requires evidence of parking/for-sale, not registration. Give a short factual reason and cite only URLs below. This is not trademark clearance.",
@@ -169,26 +216,36 @@ export async function checkFinalists(
   const onAbort = () => controller.abort(options.signal?.reason ?? new Error("Check cancelled"));
   if (options.signal?.aborted) onAbort();
   else options.signal?.addEventListener("abort", onAbort, { once: true });
+  const records: Record<string, AvailabilityRecord> = Object.create(null);
+  const cached: string[] = [];
+  let usage: Usage | undefined;
+  const key = requirementsKey(state);
+  const fail = (name: string, reason: string, evidence: AvailabilityEvidence[] = []) => {
+    records[availabilityKey(name)] = {
+      score: "error", reason, evidence, checkedAt: new Date().toISOString(), stage,
+      researchVersion: CHECK_RESEARCH_VERSION, requirementsKey: key, model: state.workerModel ?? state.model,
+      searchQueries: buildCollisionSearchQueries(name, state.product),
+    };
+  };
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     const abort = () => reject(controller.signal.reason ?? new Error("Check cancelled"));
     controller.signal.addEventListener("abort", abort, { once: true });
     if (controller.signal.aborted) abort();
-    timer = setTimeout(() => controller.abort(new Error("Availability check exceeded its 45-second budget; retry explicitly.")), options.timeoutMs ?? 45_000);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("Availability check exceeded its time budget. Retry the failed names."));
+    }, options.timeoutMs ?? 45_000);
   });
   const run = async () => {
-    const records: Record<string, AvailabilityRecord> = Object.create(null);
-    const cached: string[] = [];
     const pending: { name: string; evidence: AvailabilityEvidence[]; warnings: string[]; previous?: AvailabilityRecord }[] = [];
-    const key = requirementsKey(state);
     await Promise.all(state.finalists.map(async (name) => {
       if (controller.signal.aborted) throw controller.signal.reason;
       const cachedRecord = options.refresh ? undefined : getAvailability(state, name);
-      const previous = shouldRefreshUnknown(cachedRecord, stage) ? undefined : cachedRecord;
+      const previous = shouldRefreshUnknown(cachedRecord, stage) || isCheckStale(cachedRecord, state) ? undefined : cachedRecord;
       if (previous && (previous.stage !== "screen" || stage === "screen" || previous.score === "terrible")) {
-        records[availabilityKey(name)] = previous.requirementsKey && previous.requirementsKey !== key
-          ? { ...previous, warnings: [...(previous.warnings ?? []), "Requirements changed since this check. Use /brand check refresh to update it."] }
-          : previous;
+        records[availabilityKey(name)] = previous;
         cached.push(name);
         return;
       }
@@ -198,15 +255,14 @@ export async function checkFinalists(
         try { evidence = (await dependencies.search(name, controller.signal)).slice(0, 6); }
         catch (error) {
           if (controller.signal.aborted) throw controller.signal.reason;
-          warnings.push(`Web search unavailable: ${error instanceof Error ? error.message : "failed"}`);
+          fail(name, `Web search failed: ${error instanceof Error ? error.message : "unavailable"}`);
+          return;
         }
       }
-      if (!evidence.some((entry) => entry.source === "web")) warnings.push("No source-linked web evidence; collision assessment is incomplete.");
       pending.push({ name, evidence, warnings, previous });
     }));
     // Network completion order must not randomize the worker request or its cache prefix.
     pending.sort((a, b) => state.finalists.indexOf(a.name) - state.finalists.indexOf(b.name));
-    let usage: Usage | undefined;
     let assessments: Assessment[] = [];
     const needsAssessment = pending.filter((item) => !item.previous && item.evidence.some((entry) => entry.source === "web" && entry.url.length <= MAX_ASSESSMENT_URL_LENGTH));
     if (needsAssessment.length > 0) {
@@ -216,16 +272,27 @@ export async function checkFinalists(
         usage = response.usage;
       } catch (error) {
         if (controller.signal.aborted) throw controller.signal.reason;
-        for (const item of needsAssessment) item.warnings.push(`Assessment unavailable: ${error instanceof Error ? error.message : "failed"}`);
+        for (const item of needsAssessment) fail(item.name, `Assessment failed: ${error instanceof Error ? error.message : "unavailable"}`, item.evidence);
       }
     }
     await Promise.all(pending.map(async (item) => {
-      const assessment = assessments.find((entry) => availabilityKey(entry.name) === availabilityKey(item.name));
-      const signals: Partial<CollisionSignals> = { ...item.previous?.signals };
+      const matches = assessments.filter((entry) => availabilityKey(entry.name) === availabilityKey(item.name));
+      const assessment = matches.length === 1 ? matches[0] : undefined;
+      // These are observations within a successful search, not universal absence claims.
+      const signals: Partial<CollisionSignals> = item.previous ? { ...item.previous.signals }
+        : { famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: false };
       const suppliedUrls = new Set(selectAssessmentEvidence(item.evidence, state.product).map((entry) => entry.url));
       // Uncited model judgments never become persisted collision facts.
       const supported = assessment?.sourceUrls.some((url) => suppliedUrls.has(url)) && assessment.sourceUrls.every((url) => suppliedUrls.has(url));
       const learningCollision = hasLearningProductEvidence(item.name, state.product, item.evidence);
+      if (!learningCollision && !item.previous) {
+        if (records[availabilityKey(item.name)]?.score === "error") return;
+        if (item.evidence.length && !supported) {
+          fail(item.name, matches.length > 1 ? "Assessment returned duplicate results for this name. Retry the check."
+            : "Assessment did not return a result with valid supplied sources for this name. Retry the check.", item.evidence);
+          return;
+        }
+      }
       if (assessment && supported) {
         for (const property of ["famousCollision", "sameSpaceCollision", "giantAssociation", "comParked"] as const) {
           if (typeof assessment[property] === "boolean") signals[property] = assessment[property];
@@ -233,8 +300,11 @@ export async function checkFinalists(
         if (typeof assessment.unrelatedCount === "number") signals.unrelatedCount = assessment.unrelatedCount;
       }
       if (learningCollision) signals.sameSpaceCollision = true;
-      else if (!supported && !item.previous) item.warnings.push("No supported assessment; missing signals remain unknown.");
       let verdict = scoreFromSignals(signals);
+      if (item.previous && verdict.score === "unknown") verdict = { score: item.previous.score, reason: item.previous.reason };
+      if ((assessment?.needsReview && supported || item.previous?.score === "review") && verdict.score !== "terrible") {
+        verdict = { score: "review", reason: assessment?.reason ?? item.previous!.reason };
+      }
       // A decisive collision earns early exit. Do not spend domain/package requests on it.
       if (stage === "deep" && verdict.score !== "terrible") {
         const label = item.name.toLowerCase().replace(/\s+/g, "");
@@ -245,19 +315,19 @@ export async function checkFinalists(
         }
         item.evidence.push(...await Promise.all(lookups));
         if (item.evidence.some((entry) => entry.detail.startsWith("Unknown:"))) {
-          item.warnings.push("Some registry checks failed; registrability/handles remain unknown.");
-          if (verdict.score === "perfect" || verdict.score === "good" || verdict.score === "decent") verdict = { score: "unknown", reason: "incomplete registry checks" };
+          item.warnings.push("Some domain/package lookups failed. The collision finding is unchanged; verify those registries manually.");
         }
       }
       if (stage === "screen") item.warnings.push("Quick web screen only. Domains, package names and trademarks were not cleared.");
-      if (item.warnings.length > 0 && verdict.score === "perfect") verdict = { score: "unknown", reason: "incomplete check coverage" };
       records[availabilityKey(item.name)] = {
         score: verdict.score,
         reason: learningCollision
           ? `Web evidence describes a learning or knowledge product using this name (${verdict.reason})`
-          : assessment && supported ? `${assessment.reason} (${verdict.reason})` : item.previous?.reason ?? verdict.reason,
+          : assessment && supported ? `${assessment.reason} (${verdict.reason})` : item.previous?.reason
+            ?? "Search completed with no results for the exact name or category queries. No collision observed; not legal clearance.",
         signals, checkedAt: new Date().toISOString(), stage, researchVersion: CHECK_RESEARCH_VERSION,
         evidence: item.evidence.slice(0, 20), warnings: item.warnings,
+        searchQueries: item.previous?.searchQueries ?? buildCollisionSearchQueries(item.name, state.product),
         requirementsKey: key, model: item.previous ? item.previous.model : state.workerModel ?? state.model,
       };
     }));
@@ -265,7 +335,11 @@ export async function checkFinalists(
     return { records, cached, usage };
   };
   try { return await Promise.race([run(), deadline]); }
-  finally {
+  catch (error) {
+    if (!timedOut || options.signal?.aborted) throw error;
+    for (const name of state.finalists) if (!records[availabilityKey(name)]) fail(name, "Check timed out before completing. Press c to retry.");
+    return { records: { ...records }, cached: [...cached], usage };
+  } finally {
     if (timer) clearTimeout(timer);
     options.signal?.removeEventListener("abort", onAbort);
     controller.abort();

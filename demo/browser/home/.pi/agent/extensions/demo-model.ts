@@ -52,6 +52,7 @@ function assessmentReply(prompt: string): Step {
       giantAssociation: false,
       unrelatedCount: profile.kind === "collision" ? 0 : profile.unrelated,
       comParked: false,
+      needsReview: false,
       sourceUrls: evidence.map((entry) => entry.url).slice(0, 6),
     };
   });
@@ -76,10 +77,10 @@ function agentReply(messages: Message[]): Step {
     }
     // The tool result lists "Name: score (reason)" per line; point at the best one.
     const result = text(after.findLast((message) => message.role === "toolResult")?.content);
-    const order = ["perfect", "good", "decent", "bad", "terrible", "unknown"];
-    const scored = [...result.matchAll(/^(.+?): (\w+) \(/gm)].map(([, name, score]) => ({ name, score })).sort((a, b) => order.indexOf(a.score) - order.indexOf(b.score));
+    const order = ["clear", "light usage", "some overlap", "needs review", "crowded", "collision", "check failed", "recheck needed"];
+    const scored = [...result.matchAll(/^(.+?): ([a-z ]+) \(/gm)].map(([, name, score]) => ({ name, score })).sort((a, b) => order.indexOf(a.score) - order.indexOf(b.score));
     const best = scored[0];
-    const lead = !best ? "The check is done." : best.score === "terrible" ? "Each of these collides with something; try another round of names." : `**${best.name}** comes out best (${best.score}).`;
+    const lead = !best ? "The check is done." : best.score === "collision" ? "Each of these collides with something; try another round of names." : `**${best.name}** comes out best (${best.score}).`;
     return fauxAssistantMessage([fauxText(`${lead} The sources are in **/brand evidence <name>**. It's a first screen, not trademark clearance.`)]);
   }
   return fauxAssistantMessage([fauxText("I'm a scripted stand-in for a model, so I only know pi-brand's own requests. Start with the first button above, **/brand a reminder app that tells you when to water each plant**.")]);

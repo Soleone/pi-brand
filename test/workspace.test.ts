@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { formatScore } from "../src/scoring.ts";
 import { emptyBrandState, type BrandState } from "../src/types.ts";
 import { nameCell, nameColumnWidth, showNamingWorkspace, type WorkspacePosition, type WorkspaceScreenResult } from "../src/workspace-ui.ts";
 
@@ -48,12 +49,12 @@ test("workspace opens on a compact name table, not the brief or a filter input",
   const { frames } = await run([esc]);
   const screen = frames[0]!.join("\n");
   assert.match(screen, /NAME.*ASSESSMENT/);
-  assert.match(screen, /TaskHQ\s+\s+ good/);
+  assert.match(screen, /TaskHQ\s+\s+ light usage/);
   assert.match(screen, /A much longer name\s+—/);
   const table = frames[0]!.filter(line => /NAME|TaskHQ|A much longer name|仕事|Cafe/.test(line)).join("\n");
   assert.doesNotMatch(table, /STATE|CHECK|selected|favorite|not checked|deep/);
   assert.doesNotMatch(screen, /delight-first|Task center|Obscure dictionary|Filter:/);
-  assert.ok(frames[0]!.length <= 12);
+  assert.ok(frames[0]!.length <= 14);
 });
 
 test("columns use display width, are capped, and never overflow during navigation or resizing", async () => {
@@ -73,12 +74,12 @@ test("columns use display width, are capped, and never overflow during navigatio
 
 test("compact assessments retain short labels and favorites remain independent of marks", async () => {
   const state = fixture();
-  const scores = ["perfect", "good", "decent", "bad", "terrible", "unknown"] as const;
+  const scores = ["perfect", "good", "decent", "bad", "terrible", "review", "error", "unknown"] as const;
   state.rounds[0]!.candidates = scores.map((score, index) => ({ name: `Name${index}`, score }));
   state.selected = state.rounds[0]!.candidates.map(entry => entry.name);
   state.liked = [{ name: "Name0", likedAt: "2026-10-19", score: "perfect" }];
   const { frames } = await run([" ", "f", esc, esc], { state, widths: [24, 42, 80] });
-  for (const score of scores) assert.match(frames[2]!.join("\n"), new RegExp(`${score === "unknown" ? "" : ""} ${score}`));
+  for (const score of scores) assert.match(frames[2]!.join("\n"), new RegExp(`${score === "unknown" || score === "review" ? "" : ""} ${formatScore(score)}`));
   assert.match(frames[5]!.find(line => line.includes("Name0"))!, /^ Name0\s+/);
   assert.doesNotMatch(frames[8]!.find(line => line.includes("Name0"))!, //);
   const history = fixture(); history.dismissed = ["仕事"]; history.selected = history.selected.filter(name => name !== "仕事");
@@ -130,7 +131,7 @@ test("mark all and clearing marks do not alter stages; assessed lists show a no-
   for (const entry of state.rounds[0]!.candidates) state.availability[entry.name.normalize("NFKC").toLocaleLowerCase()] = state.availability.taskhq!;
   const checked = await run(["c", esc], { state });
   assert.equal(checked.result.action, undefined);
-  assert.match(checked.frames[1]!.join("\n"), /No unchecked or unknown names/);
+  assert.match(checked.frames[1]!.join("\n"), /No pending checks/);
   assert.match(checked.frames[1]!.join("\n"), /c Check pending \(0\)/);
 });
 
@@ -143,6 +144,51 @@ test("inconclusive checks count as pending and are retried without rechecking co
   assert.match(frames[0]!.join("\n"), /c Check pending \(3\)/);
   const marked = await run([" ", down, " ", "c"], { state });
   assert.deepEqual(marked.result.action, { kind: "check", names: ["TaskHQ", "A much longer name"], stage: "deep", refresh: false, batch: true, uncheckedOnly: false });
+});
+
+test("outdated findings are visibly marked and included in pending checks", async () => {
+  const state = fixture();
+  state.availability.taskhq!.requirementsKey = "outdated";
+  const checked = await run(["c"], { state });
+  assert.ok(checked.result.action?.kind === "check");
+  assert.equal(checked.result.action.names?.length, 4);
+  assert.match(checked.frames[0]!.join("\n"), /recheck needed/);
+  const detail = await run(["\r", esc, esc], { state });
+  assert.match(detail.frames[1]!.join("\n"), /Outdated/);
+  assert.match(detail.frames[1]!.join("\n"), /requirements changed/);
+});
+
+test("errors are pending but cited review findings do not create a retry loop", async () => {
+  const state = fixture();
+  state.availability["a much longer name"] = { score: "review", reason: "Potential use with an unclear audience", checkedAt: "2026-01-01" };
+  state.availability["仕事"] = { score: "error", reason: "Search offline", checkedAt: "2026-01-01" };
+  const checked = await run(["c"], { state });
+  assert.ok(checked.result.action?.kind === "check");
+  assert.deepEqual(checked.result.action.names, ["仕事", "Cafe\u0301"]);
+  const details = await run(["\r", esc, esc], { state, position: { tab: "names", cursor: 2 }, widths: [24, 80] });
+  assert.match(details.frames.flat().join("\n"), /Retry check/);
+  assert.match(details.frames.flat().join("\n"), /Search offline/);
+});
+
+test("best-first ordering preserves keyboard focus and temporary marks", async () => {
+  const state = fixture();
+  state.availability["a much longer name"] = { score: "perfect", reason: "No observed collisions", checkedAt: "2026-01-01" };
+  const position: WorkspacePosition = { tab: "names", cursor: 0 };
+  const sorted = await run([" ", "s", "\r", esc, esc, esc], { state, position });
+  const rows = sorted.frames[2]!.filter(line => /TaskHQ|A much longer name/.test(line));
+  assert.match(rows[0]!, /A much longer name/);
+  assert.match(rows[1]!, /^ TaskHQ/);
+  assert.match(sorted.frames[3]!.join("\n"), /Names \/ TaskHQ/);
+  assert.equal(position.sort, "best");
+  const restored = await run(["s", esc], { state, position });
+  assert.equal(position.sort, "recent");
+  assert.match(restored.frames[1]!.filter(line => /TaskHQ|A much longer name/.test(line))[0]!, /TaskHQ/);
+});
+
+test("Favorites offers a no-research shortlist export", async () => {
+  const exported = await run(["\t", "e"]);
+  assert.deepEqual(exported.result.action, { kind: "export" });
+  assert.match(exported.frames[1]!.join("\n"), /Export shortlist/);
 });
 
 test("bulk favorite changes affect stage, not marks, and invalidate the pool preview", async () => {
@@ -222,7 +268,7 @@ test("checked details retain labeled findings, warnings and scrollable evidence"
   state.availability.taskhq!.evidence = Array.from({ length: 8 }, (_, index) => ({ source: "web" as const, detail: `Source ${index} findings`, url: `https://example.com/source-${index}` }));
   const { frames } = await run(["\r", ...Array(30).fill(down), esc, esc], { state });
   const first = frames[1]!.join("\n");
-  assert.match(first, /Availability\s+good/);
+  assert.match(first, /Availability\s+light usage/);
   assert.match(first, /Checked\s+Deep check/);
   assert.match(first, /Finding\s+Some unrelated usage/);
   assert.match(first, /Warning\s+Review the same-category result/);

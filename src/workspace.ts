@@ -4,12 +4,13 @@ import { formatBrief, namingContent } from "./brief.ts";
 import { brandOverview, generationStats } from "./overview.ts";
 import { pickNames } from "./picker.ts";
 import { selectBrandOption } from "./selection.ts";
+import { formatScore } from "./scoring.ts";
 import { brandDocumentPaths, excludedNames, getAvailability } from "./store.ts";
 import type { BrandState } from "./types.ts";
 import { showNamingWorkspace, type FavoriteChange, type WorkspacePosition } from "./workspace-ui.ts";
 
 export type WorkspaceAction = (
-  | { kind: "more" | "add" | "feedback" | "models" | "close" | "stay" }
+  | { kind: "more" | "add" | "feedback" | "models" | "export" | "close" | "stay" }
   | { kind: "brief"; markdown: string }
   | { kind: "feedback-document"; markdown: string; original: string }
   | { kind: "check"; names?: string[]; allFavorites?: boolean; batch?: boolean; uncheckedOnly?: boolean; stage: "deep" | "screen"; refresh: boolean }
@@ -29,10 +30,11 @@ export function roundDetails(state: BrandState, roundId = state.rounds.at(-1)?.i
 async function favoriteAction(ctx: ExtensionContext, state: BrandState): Promise<WorkspaceAction | undefined> {
   if (!state.liked.length) { ctx.ui.notify("No favorites yet. Save names from a round first.", "info"); return; }
   const favorites = [...state.liked].reverse();
-  const rows = favorites.map((entry) => ({ name: entry.name, label: `${entry.name} · ${getAvailability(state, entry.name)?.score ?? "not checked"}` }));
+  const rows = favorites.map((entry) => ({ name: entry.name, label: `${entry.name} · ${formatScore(getAvailability(state, entry.name)?.score)}` }));
   while (true) {
-    const selected = await selectBrandOption(ctx, "Review favorites · checks are not legal clearance", ["Check selected favorites", "Check all favorites", ...rows.map((entry) => entry.label), "Back"]);
+    const selected = await selectBrandOption(ctx, "Review favorites · checks are not legal clearance", ["Check selected favorites", "Check all favorites", "Export shortlist", ...rows.map((entry) => entry.label), "Back"]);
     if (!selected || selected === "Back") return;
+    if (selected === "Export shortlist") return { kind: "export" };
     if (selected === "Check all favorites") return { kind: "check", allFavorites: true, stage: "deep", refresh: false };
     if (selected === "Check selected favorites") {
       const result = await pickNames(ctx, favorites, { title: "Select up to 3 names to check", selectionOnly: true, maxSelection: 3 });

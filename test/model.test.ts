@@ -53,7 +53,7 @@ test("creative and worker have separate stable cache identities even on the same
   assert.equal(seen[0].options.cacheRetention, "short");
   assert.ok(seen[0].system.includes("product naming"));
   assert.ok(!seen[0].system.includes("supplied sources"));
-  assert.ok(seen[1].system.includes("supplied sources"));
+  assert.ok(seen[1].system.includes("supplied search results"));
   assert.equal(seen[0].prompt, "a product brief");
   assert.equal(seen[1].prompt, "web evidence");
   assert.equal(seen[0].options.maxTokens, 3000);

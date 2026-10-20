@@ -167,6 +167,12 @@ export function saveFeedbackDocument(statePath: string, markdown: string, expect
   atomicWrite(target, markdown);
 }
 
+export function saveShortlistDocument(statePath: string, markdown: string): string {
+  const target = statePath.replace(/\.json$/, "") + ".shortlist.md";
+  atomicWrite(target, markdown);
+  return target;
+}
+
 function atomicWrite(target: string, content: string): void {
   const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
@@ -268,12 +274,12 @@ export function getAvailability(state: BrandState, name: string): AvailabilityRe
 export function recordAvailability(
   state: BrandState,
   name: string,
-  input: Omit<AvailabilityRecord, "checkedAt">,
+  input: Omit<AvailabilityRecord, "checkedAt"> & { checkedAt?: string },
 ): AvailabilityRecord {
   const trimmed = name.trim();
   const record: AvailabilityRecord = {
     ...input,
-    checkedAt: new Date().toISOString(),
+    checkedAt: input.checkedAt ?? new Date().toISOString(),
   };
   Object.defineProperty(state.availability, availabilityKey(trimmed), { value: record, enumerable: true, writable: true, configurable: true });
   const matches = (other: string): boolean => availabilityKey(other) === availabilityKey(trimmed);
@@ -421,6 +427,7 @@ function normalizeState(raw: unknown): BrandState | undefined {
         stage: entry.stage === "screen" || entry.stage === "deep" ? entry.stage : "legacy",
         researchVersion: Number.isInteger(entry.researchVersion) ? entry.researchVersion as number : undefined,
         evidence: normalizeEvidence(entry.evidence),
+        searchQueries: Array.isArray(entry.searchQueries) ? entry.searchQueries.filter((query): query is string => typeof query === "string").slice(0, 3) : undefined,
         warnings: Array.isArray(entry.warnings) ? entry.warnings.filter((warning): warning is string => typeof warning === "string").slice(0, 20) : undefined,
         requirementsKey: typeof entry.requirementsKey === "string" ? entry.requirementsKey : undefined,
         model: typeof entry.model === "string" ? entry.model : undefined,

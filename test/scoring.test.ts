@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { compareScores, SCORE_INFO, scoreFromSignals } from "../src/scoring.ts";
+import { compareScores, formatScore, needsCheck, SCORE_INFO, scoreFromSignals } from "../src/scoring.ts";
 
-test("score scale keeps historical levels and adds an honest unknown", () => {
-  assert.deepEqual(Object.keys(SCORE_INFO).sort(), ["bad", "decent", "good", "perfect", "terrible", "unknown"]);
+test("findings distinguish explicit research errors, review and legacy unknowns", () => {
+  assert.deepEqual(Object.keys(SCORE_INFO).sort(), ["bad", "decent", "error", "good", "perfect", "review", "terrible", "unknown"]);
+  assert.equal(formatScore("perfect"), "clear");
+  assert.equal(formatScore("error"), "check failed");
+  assert.equal(needsCheck("error"), true);
+  assert.equal(needsCheck("unknown"), true);
+  assert.equal(needsCheck("review"), false);
+  assert.equal(needsCheck("perfect"), false);
+  assert.equal(needsCheck(undefined), true);
   assert.ok(compareScores("perfect", "terrible") < 0);
 });
 

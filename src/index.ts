@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { Type, type Usage } from "@earendil-works/pi-ai";
 import { BorderedLoader, withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import { ASSESSMENT_SCHEMA, buildCollisionSearchQueries, checkFinalists, extractWebEvidence, shouldRefreshUnknown, type CheckDependencies } from "./checker.ts";
+import { ASSESSMENT_SCHEMA, buildCollisionSearchQueries, checkFinalists, isCheckStale, readSearchEvidence, shouldRefreshUnknown, type CheckDependencies } from "./checker.ts";
 import { recordExternalPool, takeBatch } from "./engine.ts";
 import { applyBriefChanges, contentKey, feedbackSummary, formatBrief, namingContent, parseBrief } from "./brief.ts";
 import { BRIEF_CHANGES, prepareFeedback } from "./feedback.ts";
@@ -13,9 +13,10 @@ import { generationStats } from "./overview.ts";
 import { chooseWorkspaceAction, roundDetails } from "./workspace.ts";
 import type { WorkspacePosition } from "./workspace-ui.ts";
 import { selectBrandOption } from "./selection.ts";
+import { formatShortlist } from "./shortlist.ts";
 import { buildAvailabilityPrompt } from "./prompt.ts";
-import { scoreFromSignals, type CollisionSignals } from "./scoring.ts";
-import { brandDocumentPaths, saveFeedbackDocument, addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, activeNames, removeLikes, selectNames, recordAvailability, recordRound, saveBrandState, setFinalists } from "./store.ts";
+import { formatScore, needsCheck, scoreFromSignals, type CollisionSignals } from "./scoring.ts";
+import { brandDocumentPaths, saveFeedbackDocument, saveShortlistDocument, addLikes, availabilityKey, dismissNames, excludedNames, getAvailability, getAvailabilityBatch, loadBrandState, activeNames, removeLikes, selectNames, recordAvailability, recordRound, saveBrandState, setFinalists } from "./store.ts";
 import { type AvailabilityRecord, type BrandState, type Candidate, type FeedbackEntry, type NamingContent } from "./types.ts";
 
 const CANDIDATE_SCHEMA = Type.Object({ name: Type.String({ maxLength: 60 }), flavor: Type.Optional(Type.String({ maxLength: 120 })), style: Type.Optional(Type.String({ maxLength: 60 })) });
@@ -78,7 +79,7 @@ function namesFrom(text: string, state: BrandState): string[] {
 function showRecord(ctx: ExtensionContext, name: string, record?: AvailabilityRecord): void {
   if (!record) { ctx.ui.notify(`${name}: not checked yet.`, "info"); return; }
   ctx.ui.notify([
-    `${name}: ${record.score}. ${record.reason}`,
+    `${name}: ${formatScore(record.score)}. ${record.reason}`,
     `Checked ${record.checkedAt} (${record.stage ?? "legacy"}). Not trademark clearance.`,
     ...(record.warnings ?? []),
     ...(record.evidence ?? []).map((source) => `${source.source}: ${source.detail}\n${source.url}`),
@@ -110,6 +111,11 @@ async function chooseFinalists(ctx: ExtensionContext, initial?: string[]): Promi
   return outcome.names.length > 0;
 }
 
+/** pi exposes `tools` and `executeTool` as non-enumerable, so a spread would silently drop them. */
+function withToolSignal(ctx: ExtensionToolContext, signal: AbortSignal | undefined): ExtensionToolContext {
+  return Object.assign(Object.create(ctx), { signal: signal ?? ctx.signal }) as ExtensionToolContext;
+}
+
 function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckDependencies {
   return {
     search: async (name, signal) => {
@@ -118,14 +124,13 @@ function checkDependencies(ctx: ExtensionToolContext, state: BrandState): CheckD
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted();
         try {
+          const queries = buildCollisionSearchQueries(name, state.product);
           const outcome = await ctx.executeTool("web_search", {
-            queries: buildCollisionSearchQueries(name, state.product),
+            queries,
             numResults: 3, includeContent: false, workflow: "none",
           }, { signal });
           if (outcome.isError) throw new Error("Web search failed or was blocked.");
-          const evidence = extractWebEvidence(outcome.result.content);
-          if (evidence.length > 0) return evidence;
-          lastError = new Error("Web search returned no source-linked results.");
+          return readSearchEvidence(outcome.result, queries.length);
         } catch (error) {
           if (signal.aborted) throw signal.reason;
           lastError = error;
@@ -159,52 +164,62 @@ async function runCheck(ctx: ExtensionToolContext, stage: "screen" | "deep", ref
     const known = new Map([...run.state.rounds.flatMap(round => round.candidates), ...run.state.liked].map(entry => [availabilityKey(entry.name), entry]));
     targets = targets.filter(name => {
       const score = getAvailability(run.state, name)?.score ?? known.get(availabilityKey(name))?.score;
-      return !score || score === "unknown";
+      return needsCheck(score) || isCheckStale(getAvailability(run.state, name), run.state);
     });
   }
-  if (!targets.length) return textResult("No unchecked or unknown names in this selection.", { records: {}, cached: [] }, undefined, false);
+  if (!targets.length) return textResult("No pending checks. Existing findings are saved; use refresh to explicitly recheck them.", { records: {}, cached: [] }, undefined, false);
 
   const records: Record<string, AvailabilityRecord> = Object.create(null);
   const cached: string[] = [];
+  const errors: Record<string, string> = Object.create(null);
   let usage: Usage | undefined;
   const batchCount = Math.ceil(targets.length / 3);
-  for (let offset = 0; offset < targets.length; offset += 3) {
-    const batch = targets.slice(offset, offset + 3);
-    const checkState = { ...run.state, finalists: batch };
-    ctx.ui.setStatus?.("brand", `Checking names ${offset + 1}-${offset + batch.length} of ${targets.length} (${stage}, batch ${Math.floor(offset / 3) + 1}/${batchCount})...`);
-    const result = await checkFinalists(checkState, stage, checkDependencies(ctx, checkState), { refresh, signal: ctx.signal })
-      .finally(() => ctx.ui.setStatus?.("brand", undefined));
-    await mutate(ctx, (state) => {
-      for (const [name, record] of Object.entries(result.records)) {
-        if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
-        // Another writer may have completed this name while this operation was awaiting I/O.
-        const hit = getAvailability(state, name);
-        // A failed forced refresh must not replace a conclusive result. Retrying an unknown may still add evidence.
-        if (hit && hit.score !== "unknown" && refresh && record.score === "unknown" && record.warnings?.some(warning => /unavailable|failed/i.test(warning))) {
-          result.records[name] = { ...hit, reason: `${hit.reason}. Refresh failed; previous assessment retained.` };
-          continue;
+  try {
+    for (let offset = 0; offset < targets.length; offset += 3) {
+      const batch = targets.slice(offset, offset + 3);
+      const checkState = { ...run.state, finalists: batch };
+      ctx.ui.setStatus?.("brand", `Checking names ${offset + 1}-${offset + batch.length} of ${targets.length} (${stage}, batch ${Math.floor(offset / 3) + 1}/${batchCount})...`);
+      const result = await checkFinalists(checkState, stage, checkDependencies(ctx, checkState), { refresh, signal: ctx.signal });
+      for (const [name, record] of Object.entries(result.records)) if (record.score === "error") errors[name] = record.reason;
+      await mutate(ctx, (state) => {
+        for (const [name, record] of Object.entries(result.records)) {
+          if (result.cached.some((entry) => availabilityKey(entry) === name)) continue;
+          // Another writer may have completed this name while this operation was awaiting I/O.
+          const hit = getAvailability(state, name);
+          // Failed research must not erase a useful earlier finding or make its timestamp look fresh.
+          if (hit && !needsCheck(hit.score) && record.score === "error") {
+            const retained = { ...hit, warnings: [...(hit.warnings ?? []).filter(warning => !warning.startsWith("Refresh failed:")), `Refresh failed: ${record.reason} Previous assessment retained.`] };
+            recordAvailability(state, name, retained);
+            result.records[name] = retained;
+            continue;
+          }
+          if (hit && !refresh && hit.stage !== "screen" && !shouldRefreshUnknown(hit, stage) && !isCheckStale(hit, state)) {
+            result.records[name] = hit;
+            continue;
+          }
+          recordAvailability(state, name, record);
         }
-        if (hit && !refresh && hit.stage !== "screen" && !shouldRefreshUnknown(hit, stage)) continue;
-        recordAvailability(state, name, record);
-      }
-    });
-    Object.assign(records, result.records);
-    cached.push(...result.cached);
-    usage = addUsage(usage, result.usage);
-  }
+      });
+      Object.assign(records, result.records);
+      cached.push(...result.cached);
+      usage = addUsage(usage, result.usage);
+    }
+  } finally { ctx.ui.setStatus?.("brand", undefined); }
   const summaries = targets.map((name) => {
     const record = records[availabilityKey(name)];
     const isCached = cached.some((entry) => availabilityKey(entry) === availabilityKey(name));
-    const diagnostics = record.score === "unknown" && record.warnings?.length
+    const diagnostics = record.warnings?.length
       ? `; ${record.warnings.slice(0, 2).map((warning) => warning.replace(/\s+/g, " ").slice(0, 180)).join("; ")}`
       : "";
-    return `${name}: ${record.score} (${record.reason}${diagnostics})${isCached ? " [cached]" : ""}`;
+    return `${name}: ${formatScore(record.score)} (${record.reason}${diagnostics})${isCached ? " [cached]" : ""}`;
   });
-  const summary = allFavorites || options.batch
-    ? `${targets.length} ${allFavorites ? "favorites" : "names"} checked (${stage}, ${refresh ? "refreshed" : "cache first"}; ${cached.length} cached).\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen the workspace to see every status.` : ""}`
-    : summaries.join("\n");
-  ctx.ui.notify(`${summary}\nSources: /brand evidence <name>. These findings are not legal clearance.`, "info");
-  return textResult(summary, { records, cached }, usage, false);
+  const failed = Object.keys(errors).length;
+  const review = targets.filter(name => !errors[availabilityKey(name)] && records[availabilityKey(name)].score === "review").length;
+  const noun = allFavorites ? (targets.length === 1 ? "favorite" : "favorites") : (targets.length === 1 ? "name" : "names");
+  const completion = `Check finished: ${targets.length} ${noun}; ${targets.length - failed - review} assessed, ${review} need review, ${failed} failed (${stage}; ${cached.length} cached).`;
+  const summary = `${completion}\n${summaries.slice(0, 10).join("\n")}${summaries.length > 10 ? `\n… and ${summaries.length - 10} more. Reopen the workspace to see every status.` : ""}`;
+  ctx.ui.notify(`${summary}\nSources: /brand evidence <name>. These findings are not legal clearance.`, failed ? "error" : "info");
+  return { ...textResult(summary, { records, cached, errors }, usage, false), ...(failed ? { isError: true } : {}) };
 }
 
 export default function registerPiBrand(pi: ExtensionAPI): void {
@@ -279,6 +294,13 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           if (!action || action.kind === "close") return textResult("Naming workspace closed. Favorite changes saved.", { picked: [...workspacePicks] }, usage);
           if (action.kind === "stay") continue;
           try {
+            if (action.kind === "export") {
+              const current = load(ctx);
+              const path = saveShortlistDocument(current.path, formatShortlist(current.state));
+              position.notice = `Shortlist exported: ${path}`;
+              ctx.ui.notify(`Shortlist saved, with findings and sources: ${path}`, "info");
+              continue;
+            }
             if (action.kind === "add") {
               const name = (await ctx.ui.input("Add a name", "Name only, up to 60 characters"))?.trim();
               if (!name) continue;
@@ -295,6 +317,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
               if (checkCtx) {
                 const result = await runCheck(checkCtx, action.stage, action.refresh, action.names, action.allFavorites, action);
                 usage = addUsage(usage, result.usage);
+                position.notice = result.content[0].text.split("\n")[0];
                 continue;
               }
               pi.sendUserMessage(buildAvailabilityPrompt(load(ctx).state, action.stage, action.refresh, action.names, action.allFavorites, action), { deliverAs: "followUp" });
@@ -342,7 +365,9 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
               continue;
             } else overview = false;
           } catch (error) {
-            ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+            const message = error instanceof Error ? error.message : String(error);
+            if (action.kind === "check") position.notice = `Check stopped: ${message}`;
+            ctx.ui.notify(message, "error");
             continue;
           }
         }
@@ -478,9 +503,19 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
   });
   pi.registerTool({
     name: "brand_check", label: "Check names", executionMode: "sequential",
-    description: "Check saved names without favoriting them. Up to three by default; batch true checks a named selection in batches of three. uncheckedOnly skips conclusive assessments but retries unknowns; refresh true explicitly rechecks with the current worker model. allFavorites checks saved favorites.",
+    description: "Check saved names without favoriting them. Up to three by default; batch true checks a named selection in batches of three. uncheckedOnly retries failed or legacy incomplete checks but skips assessed names and review findings; refresh true explicitly rechecks with the current worker model. allFavorites checks saved favorites.",
     parameters: CHECK_OPTIONS,
-    async execute(_id, params, _signal, _update, ctx) { return runCheck(ctx, params.stage ?? "deep", params.refresh, params.names, params.allFavorites, params); },
+    async execute(_id, params, signal, _update, ctx) {
+      const position = resumeWorkspace?.sessionId === ctx.sessionManager.getSessionId() ? resumeWorkspace.position : undefined;
+      try {
+        const result = await runCheck(withToolSignal(ctx, signal), params.stage ?? "deep", params.refresh, params.names, params.allFavorites, params);
+        if (position) position.notice = result.content[0].text.split("\n")[0];
+        return result;
+      } catch (error) {
+        if (position) position.notice = `Check stopped: ${error instanceof Error ? error.message : String(error)}`;
+        throw error;
+      }
+    },
   });
   pi.registerTool({
     name: "brand_pick", label: "Pick names", executionMode: "sequential", exposure: "codemode",
@@ -547,6 +582,11 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         if (command === "settings") { await openModelSettings(ctx); return; }
         if (command === "likes" || command === "liked") {
           ctx.ui.notify(`Favorites (${run.state.liked.length}): ${run.state.liked.map((entry) => `${entry.name}${entry.score ? ` (${entry.score})` : ""}`).join(", ") || "none"}\nFinalists: ${run.state.finalists.join(", ") || "none"}`, "info"); return;
+        }
+        if (command === "shortlist") {
+          const path = saveShortlistDocument(run.path, formatShortlist(run.state));
+          ctx.ui.notify(`Shortlist saved, with findings and sources: ${path}`, "info");
+          return;
         }
         if (command === "stats") { ctx.ui.notify(generationStats(run.state, run.path), "info"); return; }
         if (command === "brief") {
@@ -652,12 +692,14 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", (_event, ctx) => {
     const resume = resumeWorkspace;
     resumeWorkspace = undefined;
     if (!resume || ctx.mode !== "tui" || busy || ctx.sessionManager.getSessionId() !== resume.sessionId) return;
-    try { await runWorkspace(ctx, undefined, undefined, true, resume.position); }
-    catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+    // Do not await an interactive screen here: Pi must finish agent_end to clear its run loader.
+    void runWorkspace(ctx, undefined, undefined, true, resume.position).catch(error => {
+      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+    });
   });
   pi.on("session_shutdown", () => {
     resumeWorkspace = undefined;
@@ -674,6 +716,7 @@ const HELP = [
   "/brand brief [edit]  read or edit the canonical naming document",
   "/brand history  editable feedback history (reference only)",
   "/brand round [id]  actual saved generation inputs and origin",
+  "/brand shortlist  export favorites with saved findings and sources; no new research",
   "/brand check [name, name|refresh]  check selected favorites; no promotion required",
   "/brand evidence <name>  retained sources and findings, not legal clearance",
   "Settings and diagnostics: /brand settings · stats · words single|multiple · length <3-30> · domains <suffixes> · packages on|off",
