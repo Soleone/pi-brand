@@ -77,7 +77,7 @@ function agentReply(messages: Message[]): Step {
     }
     // The tool result lists "Name: score (reason)" per line; point at the best one.
     const result = text(after.findLast((message) => message.role === "toolResult")?.content);
-    const order = ["clear", "light usage", "some overlap", "needs review", "crowded", "collision", "check failed", "recheck needed"];
+    const order = ["clear", "light use", "some overlap", "needs review", "crowded", "name clash", "check failed", "recheck needed"];
     const scored = [...result.matchAll(/^(.+?): ([a-z ]+) \(/gm)].map(([, name, score]) => ({ name, score })).sort((a, b) => order.indexOf(a.score) - order.indexOf(b.score));
     const best = scored[0];
     const lead = !best ? "The check is done." : best.score === "collision" ? "Each of these collides with something; try another round of names." : `**${best.name}** comes out best (${best.score}).`;

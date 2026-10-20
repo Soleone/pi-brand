@@ -3,10 +3,10 @@ export type AvailabilityScore = "perfect" | "good" | "decent" | "bad" | "terribl
 export const SCORE_ORDER: AvailabilityScore[] = ["perfect", "good", "decent", "review", "bad", "terrible", "error", "unknown"];
 export const SCORE_INFO: Record<AvailabilityScore, { label: string; meaning: string; nextStep: string }> = {
   perfect: { label: "clear", meaning: "No notable collision found in the searches performed", nextStep: "Worth shortlisting. Verify domains and trademarks before committing." },
-  good: { label: "light usage", meaning: "Some unrelated usage; worth considering", nextStep: "Check the cited uses for search confusion, then shortlist if they feel distinct." },
+  good: { label: "light use", meaning: "Some unrelated usage; worth considering", nextStep: "Check the cited uses for search confusion, then shortlist if they feel distinct." },
   decent: { label: "some overlap", meaning: "Multiple unrelated uses; review discoverability", nextStep: "Compare the cited uses with your audience and search discoverability." },
   bad: { label: "crowded", meaning: "Crowded name or strong unrelated brand association", nextStep: "Consider another name unless you have a clear way to distinguish it." },
-  terrible: { label: "collision", meaning: "Notable same-category or famous-brand collision; avoid confusion", nextStep: "Explore another name. The cited use risks confusion with your product." },
+  terrible: { label: "name clash", meaning: "Notable same-category or famous-brand collision; avoid confusion", nextStep: "Explore another name. The cited use risks confusion with your product." },
   review: { label: "needs review", meaning: "A specific potential collision needs a human decision", nextStep: "Read the cited finding before deciding. A recheck is available, not required." },
   error: { label: "check failed", meaning: "Research could not complete; no availability verdict", nextStep: "Retry the check. If it keeps failing, verify web search and the worker model in settings." },
   unknown: { label: "recheck needed", meaning: "An older incomplete assessment needs a fresh check", nextStep: "Run a fresh check with the current research rules." },

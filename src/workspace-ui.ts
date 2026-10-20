@@ -2,7 +2,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { isCheckStale } from "./checker.ts";
 import { availabilityKey, getAvailability } from "./store.ts";
-import { compareScores, formatScore, needsCheck, SCORE_INFO } from "./scoring.ts";
+import { compareScores, formatScore, needsCheck, SCORE_INFO, type AvailabilityScore } from "./scoring.ts";
 import type { BrandState, Candidate } from "./types.ts";
 import type { WorkspaceAction } from "./workspace.ts";
 
@@ -12,6 +12,21 @@ type ScreenAction = WorkspaceAction | { kind: "edit-brief" } | { kind: "annotati
 export interface WorkspaceScreenResult { action?: ScreenAction; favoriteChanges: FavoriteChange[] }
 
 const PAGE_SIZE = 10;
+
+/** One color per assessment state: green usable, yellow caution, red clash, blue or gray needs a check. */
+export function scoreColor(score: AvailabilityScore | undefined): Parameters<Theme["fg"]>[0] {
+  switch (score) {
+    case "perfect": return "success";
+    case "good": return "text";
+    case "decent": return "warning";
+    case "bad": return "warning";
+    case "terrible": return "error";
+    case "review": return "warning";
+    case "error": return "accent";
+    case "unknown": return "muted";
+    default: return "dim";
+  }
+}
 
 /** Pad terminal columns, not code units (names may contain wide or combining characters). */
 export function nameCell(text: string, width: number): string {
@@ -103,7 +118,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           for (const [index, entry] of rows.slice(start, start + PAGE_SIZE).entries()) {
             const active = start + index === position.cursor;
             const score = assessmentScore(entry);
-            const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" || score === "error" ? "error" : score === "decent" || score === "review" ? "warning" : "muted";
+            const color = scoreColor(score);
             const key = availabilityKey(entry.name);
             const favorite = favorites.has(key) ? fg("warning", "") : discarded.has(key) ? fg("dim", "") : " ";
             const status = score ? `${score === "unknown" || score === "review" ? "" : ""} ${formatScore(score)}` : "—";
@@ -165,7 +180,7 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
           else content.push(...wrapped.map((line, index) => `${fg("muted", nameCell(index === 0 ? label : "", 13))}${line}`));
         };
         const score = record?.score ?? detail.score;
-        const color = score === "perfect" || score === "good" ? "success" : score === "bad" || score === "terrible" || score === "error" ? "error" : score === "decent" || score === "review" ? "warning" : "muted";
+        const color = scoreColor(score);
         field("Availability", isCheckStale(record, state) ? fg("warning", `Outdated · ${formatScore(score)}`) : score ? fg(color, formatScore(score)) : "Not checked");
         const reason = record?.reason ?? detail.scoreReason;
         if (reason) field("Finding", reason);

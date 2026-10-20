@@ -49,7 +49,7 @@ test("workspace opens on a compact name table, not the brief or a filter input",
   const { frames } = await run([esc]);
   const screen = frames[0]!.join("\n");
   assert.match(screen, /NAME.*ASSESSMENT/);
-  assert.match(screen, /TaskHQ\s+\s+ light usage/);
+  assert.match(screen, /TaskHQ\s+\s+ light use/);
   assert.match(screen, /A much longer name\s+—/);
   const table = frames[0]!.filter(line => /NAME|TaskHQ|A much longer name|仕事|Cafe/.test(line)).join("\n");
   assert.doesNotMatch(table, /STATE|CHECK|selected|favorite|not checked|deep/);
@@ -268,7 +268,7 @@ test("checked details retain labeled findings, warnings and scrollable evidence"
   state.availability.taskhq!.evidence = Array.from({ length: 8 }, (_, index) => ({ source: "web" as const, detail: `Source ${index} findings`, url: `https://example.com/source-${index}` }));
   const { frames } = await run(["\r", ...Array(30).fill(down), esc, esc], { state });
   const first = frames[1]!.join("\n");
-  assert.match(first, /Availability\s+light usage/);
+  assert.match(first, /Availability\s+light use/);
   assert.match(first, /Checked\s+Deep check/);
   assert.match(first, /Finding\s+Some unrelated usage/);
   assert.match(first, /Warning\s+Review the same-category result/);
