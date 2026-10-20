@@ -33,7 +33,7 @@ test("creative and worker have separate stable cache identities even on the same
   const ctx = {
     cwd: "/tmp/pi-brand-model-tests", isProjectTrusted: () => true,
     modelRegistry: {
-      find: (_provider: string, id: string) => ({ provider: "openai", id, maxTokens: 4096, contextWindow: 8192 }),
+      find: (_provider: string, id: string) => ({ provider: "openai", id, maxTokens: 32000, contextWindow: 200000 }),
       hasConfiguredAuth: () => true,
       streamSimple: (model: { id: string }, request: { systemPrompt: string; messages: { content: string }[] }, options: { sessionId: string; cacheRetention: string; maxTokens: number }) => {
         seen.push({ model: model.id, system: request.systemPrompt, prompt: request.messages[0].content, options });
@@ -56,8 +56,32 @@ test("creative and worker have separate stable cache identities even on the same
   assert.ok(seen[1].system.includes("supplied search results"));
   assert.equal(seen[0].prompt, "a product brief");
   assert.equal(seen[1].prompt, "web evidence");
-  assert.equal(seen[0].options.maxTokens, 3000);
-  assert.equal(seen[1].options.maxTokens, 2000);
+  assert.equal(seen[0].options.maxTokens, 16000);
+  assert.equal(seen[1].options.maxTokens, 12000);
+});
+
+test("a length stop gets one larger retry with an explicit tool instruction", async () => {
+  const budgets: number[] = [];
+  let calls = 0;
+  const ctx = {
+    cwd: "/tmp/pi-brand-model-tests", isProjectTrusted: () => true,
+    modelRegistry: {
+      find: () => ({ provider: "openai", id: "verbose", maxTokens: 32000, contextWindow: 200000 }),
+      hasConfiguredAuth: () => true,
+      streamSimple: (_model: unknown, request: { messages: { role: string; content: string }[] }, options: { maxTokens: number }) => {
+        calls++;
+        budgets.push(options.maxTokens);
+        if (calls === 1) return { result: async () => ({ stopReason: "length", content: [], usage: { input: 1 } }) };
+        assert.equal(request.messages.length, 2);
+        assert.match(request.messages[1].content, /submit_result/);
+        return { result: async () => ({ stopReason: "toolUse", content: [{ type: "toolCall", id: "result", name: "submit_result", arguments: { names: ["Able"] } }], usage: { input: 1 } }) };
+      },
+    },
+  } as unknown as ExtensionContext;
+  const result = await requestStructured(ctx, "openai/verbose", "a product brief", schema, new AbortController().signal);
+  assert.deepEqual(budgets, [16000, 24000]);
+  assert.deepEqual(result.value, { names: ["Able"] });
+  assert.equal(calls, 2);
 });
 
 test("model requests reserve room for output and reject oversized input before dispatch", async () => {

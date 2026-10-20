@@ -66,7 +66,7 @@ function harness() {
         const worker = context.systemPrompt.includes("preliminary brand collisions");
         const briefRole = context.systemPrompt.includes("You edit a product naming brief");
         requests.push({ role: briefRole ? "brief" : worker ? "worker" : "creative", prompt: String(context.messages[0].content) });
-        assert.equal(options.maxTokens, worker || briefRole ? 2000 : 3000);
+        assert.equal(options.maxTokens, briefRole ? 4000 : worker ? 12000 : 16000);
         assert.match(options.sessionId, briefRole ? /pi-brand-v1-brief-/ : worker ? /pi-brand-v1-worker-/ : /pi-brand-v1-creative-/);
         assert.equal(options.cacheRetention, "short");
         assert.equal(options.maxRetries, 0);
