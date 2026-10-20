@@ -889,3 +889,15 @@ test("models remain in settings; worker routing does not change creative input o
     assert.equal(app.ctx.model!.id, "gpt-6.1-sol");
   } finally { app.cleanup(); }
 });
+
+test("a manually added name can be favorited immediately, without a check", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close"); await app.command("tasks");
+    app.inputs.push("Handpicked");
+    terminalScripts(app.ctx, [["n"], ["f", "\x1b"]]);
+    await app.command("");
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Handpicked"]);
+    assert.ok(app.state().selected.includes("Handpicked"));
+  } finally { app.cleanup(); }
+});

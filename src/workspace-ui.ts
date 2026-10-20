@@ -312,12 +312,14 @@ export async function showNamingWorkspace(ctx: ExtensionContext, state: BrandSta
             if (rows.length && rows.every(entry => marked.has(availabilityKey(entry.name)))) marked.clear();
             else for (const entry of rows) marked.add(availabilityKey(entry.name));
           } else if (data === "f" && position.tab !== "history") {
-            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : entry === selected());
+            const focusKey = availabilityKey(selected()?.name ?? "");
+            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : availabilityKey(entry.name) === focusKey);
             const promote = !targets.every(entry => favorites.has(availabilityKey(entry.name)));
             for (const entry of targets) if (favorites.has(availabilityKey(entry.name)) !== promote) toggle(entry);
           }
           else if (data === "d" && position.tab !== "history") {
-            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : entry === selected());
+            const focusKey = availabilityKey(selected()?.name ?? "");
+            const targets = entries().filter(entry => marked.size ? marked.has(availabilityKey(entry.name)) : availabilityKey(entry.name) === focusKey);
             if (targets.length) { finish({ kind: "discard", names: targets.map(entry => entry.name) }); return; }
           }
           else if (matchesKey(data, Key.up)) position.cursor--;
