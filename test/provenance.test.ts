@@ -31,13 +31,15 @@ test("the exact prompt retains long directions, all explicit examples, and permi
 test("pools retain exact inputs and reserve provenance; changed examples invalidate older pools", async () => {
   const state = emptyBrandState("tasks");
   let calls = 0;
-  const request = async () => { calls++; return { candidates: names.map(name => ({ name })) }; };
+  const request = async () => { calls++; return { candidates: names.map(name => ({ name: calls === 1 ? name : `New${name}` })) }; };
   const first = await takeBatch(state, request);
   const pool = structuredClone(state.pools[0]);
   recordRound(state, { product: state.product, candidates: first, ...state.lastBatch });
   assert.equal(state.lastBatch?.origin, "generated");
   state.selected.push("Able");
-  await takeBatch(state, request);
+  assert.deepEqual(state.reserve, []);
+  state.reserve = [{ name: "Legacy" }];
+  assert.deepEqual(await takeBatch(state, request), [{ name: "Legacy" }]);
   assert.equal(calls, 1);
   assert.equal(state.lastBatch?.origin, "reserve");
   state.reserve = [{ name: "OldUnshown" }];

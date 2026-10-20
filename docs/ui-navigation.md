@@ -1,11 +1,11 @@
 # Naming workspace
 
-The everyday loop is **generate → select → favorite/react → refine → generate**. The terminal opens on the active list, not an action menu or the full brief.
+The everyday loop is **generate → pick → favorite/react → refine → generate**. The terminal opens on the active list, not an action menu or the full brief.
 
 ## Name lifecycle
 
-- **New** is transient while generation runs. A completed batch joins the active list as **Selected**.
-- **Selected** means membership in the active list, not a checked checkbox.
+- **New** is transient while generation runs. The entire completed pool opens in one scrollable, filterable picker, with no top-N remainder held back. Space toggles names and Enter saves.
+- **Selected** means membership in the active list, not a checked checkbox. Only picked names join it. Unpicked names remain in History and stay excluded from future suggestions; they are not marked as disliked.
 - **Favorite** is a starred active name. Favorites are positive taste references alongside the brief.
 - **Discarded** names leave the active list and favorites, but remain in saved rounds with their evidence. They are still excluded from future suggestions. Restore a historical name with `s` in its details, or favorite it explicitly.
 
@@ -60,7 +60,7 @@ Rows show **bulk mark, name, favorite star, assessment** using terminal display 
 
 A one-cell Nerd Font checkmark precedes marked names; unmarked rows reserve a blank cell. There are no icon controls in the header. Keyboard focus uses a bold, accented name, independent of bulk marks. Name width is capped at 28 columns. Screens narrower than 20 columns hide assessments; details retain the information. Color reinforces text labels, never replacing them: green for usable, yellow for caution, red for a name clash, accent for a failed check and gray for unresolved findings.
 
-RPC retains supported select/editor dialogs and its compatibility picker. Print/JSON mode records generated batches as selected without UI. `/brand keep <names>` remains the compatibility command to favorite names; `/brand dismiss <names>` discards.
+RPC retains supported select/editor dialogs and its compatibility picker. Print/JSON mode records the round without adding it to the active list; use `/brand keep <names>` to select or favorite names there. `/brand keep <names>` remains the compatibility command to favorite names; `/brand dismiss <names>` discards.
 
 `/brand check <names>` checks up to three saved names; `/brand check all` checks pending active names (unchecked, failed or outdated); `/brand check all refresh` explicitly rechecks all active names. `brand_check` accepts a named batch with `batch: true`, `uncheckedOnly` and explicit `refresh`. The legacy `allFavorites` option remains supported.
 

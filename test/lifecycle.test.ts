@@ -11,6 +11,8 @@ import { emptyBrandState } from "../src/types.ts";
 test("generated names become selected; favorites and bulk-independent discards preserve history", () => {
   const state = emptyBrandState("tasks");
   const round = recordRound(state, { product: state.product, candidates: [{ name: "TaskHQ" }, { name: "TaskPatio" }] });
+  assert.deepEqual(state.selected, []);
+  selectNames(state, ["TaskHQ", "TaskPatio"]);
   assert.deepEqual(state.selected, ["TaskHQ", "TaskPatio"]);
   assert.deepEqual(state.liked, []);
   addLikes(state, round, [round.candidates[0]]);
@@ -86,7 +88,7 @@ test("v3 migration seeds latest round plus favorites, retains an immutable backu
     const document = brandDocumentPaths(target).brief;
     fs.writeFileSync(document, fs.readFileSync(document, "utf8").replace("## Explore\n", "## Explore\nHQ constructions\n"));
     const loaded = loadBrandState(cwd, true, env);
-    assert.equal(loaded.state.version, 4);
+    assert.equal(loaded.state.version, 5);
     assert.equal(loaded.state.brief.direction, "HQ constructions");
     assert.deepEqual(loaded.state.selected, ["Current", "OldFavorite"]);
     assert.equal(loaded.state.rounds.length, 2);
@@ -96,5 +98,30 @@ test("v3 migration seeds latest round plus favorites, retains an immutable backu
     assert.deepEqual(reopened.state.selected, ["OldFavorite"]);
     assert.equal(fs.readFileSync(`${target}.v3-backup`, "utf8"), original);
     assert.deepEqual(fs.readdirSync(cwd), []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("v4 migration drops auto-selected batch names but keeps favorites and manual additions", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "brand-v4-"));
+  try {
+    const cwd = path.join(root, "project"); fs.mkdirSync(cwd);
+    const target = path.join(root, "run.json");
+    const env = { PI_BRAND_CONFIG: target };
+    const state = emptyBrandState("tasks");
+    const round = recordRound(state, { product: state.product, candidates: [{ name: "AutoOne" }, { name: "AutoTwo" }] });
+    state.selected.push("AutoOne", "AutoTwo", "Handmade");
+    addLikes(state, round, [round.candidates[0]]);
+    saveBrandState(target, state);
+    const raw = JSON.parse(fs.readFileSync(target, "utf8")); raw.version = 4;
+    const original = JSON.stringify(raw);
+    fs.writeFileSync(target, original);
+    const loaded = loadBrandState(cwd, true, env);
+    assert.equal(loaded.state.version, 5);
+    assert.deepEqual(loaded.state.selected.sort(), ["AutoOne", "Handmade"]);
+    assert.deepEqual(loaded.state.liked.map((entry) => entry.name), ["AutoOne"]);
+    assert.equal(loaded.state.rounds[0]!.candidates.length, 2);
+    assert.ok(excludedNames(loaded.state).seen.has("autotwo"));
+    assert.equal(fs.readFileSync(`${target}.v4-backup`, "utf8"), original);
+    assert.ok(loaded.warnings.some((warning) => warning.includes("v4 backup")));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

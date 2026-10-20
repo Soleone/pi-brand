@@ -17,7 +17,7 @@ Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability che
 ## The everyday loop
 
 1. `/brand <what the product does>` generates names from your saved brief.
-2. Generated names join the active list as **Selected**. **Space** marks rows for bulk actions; **a** marks all filtered rows. **f** toggles Favorite on the highlighted or marked names. **Enter** opens details.
+2. A picker shows the entire generated pool, not just its top names. Scroll or filter to browse all names without generating again. **Space** toggles names, **Enter** saves. Only picked names join the active list as **Selected**; the rest stay in History and remain excluded from future suggestions. **Space** also marks rows for bulk actions, **a** marks all filtered rows, **f** toggles Favorite and **Enter** opens details.
 3. **Tab or ←/→** switches **All / Candidates / Favorites**. **h** opens History. Navigation never starts model work. **/** searches names.
 4. **g** prepares generation: see whether the next batch uses the reserve or a new model call, then explicitly start with Enter.
 5. **n** adds your own name to the list and focuses it. **Enter**, then **c**, checks just that name. Adding alone does no research or favoriting.
@@ -25,7 +25,7 @@ Requires pi **0.99.1 or newer**. After updating, run `/reload`. Availability che
 7. **c** checks pending names; **s** switches between recent and best-first order. In Favorites, **e** exports a shortlist with saved findings and sources, without new research.
 8. `/brand` resumes without generating. Name details expose evidence, suggested next steps, direct check actions and similar-name refinement. Check shortcuts start immediately; no finalist promotion is needed.
 
-**New → Selected → Favorite** is the naming lifecycle; bulk checkboxes are separate. New is transient during generation, Selected means membership in the active list, and Favorite is a starred active name. **d** discards highlighted/marked names after confirmation. Discarded names leave the active list but remain in History and duplicate exclusions. Closing never deletes or rewrites a round. **More like this** (`m` in name details) prepares a brief refinement without silently favoriting the reference.
+**New → Selected → Favorite** is the naming lifecycle; bulk checkboxes are separate. New is transient during generation and ends in the picker. Selected means membership in the active list, and Favorite is a starred active name. **d** discards highlighted/marked names after confirmation. Discarded names leave the active list but remain in History and duplicate exclusions. Closing never deletes or rewrites a round. **More like this** (`m` in name details) prepares a brief refinement without silently favoriting the reference.
 
 ## Your brief and feedback
 
@@ -45,7 +45,7 @@ Historical notes are preserved but not blindly replayed. Imported notes are labe
 
 Each generated pool retains its brief revision, effective inputs, explicit examples, model, system prompt, exact request prompts (including a refill), and original candidates. `/brand round [id]` or **b → i** inspects them. Old rounds without recorded inputs say so instead of inventing provenance.
 
-The generation preparation screen distinguishes **new generation** from **remaining names from a previous pool**. Brief, favorite or creative-model changes invalidate old reserves. Generating uses single-turn isolated requests, not your main conversation. Inspection only brings the requested context into chat.
+Each generation shows its complete pool at once and leaves no names waiting for another press of **g**. The generation preparation screen distinguishes **new generation** from **remaining names from an older saved pool**; any such reserve is shown in full. Brief, favorite or creative-model changes invalidate old reserves. Generating uses single-turn isolated requests, not your main conversation. Inspection only brings the requested context into chat.
 
 Default naming does **no availability research**. See [budgets and caching](docs/budgets-and-caching.md) for request limits, costs, and the optional screened mode.
 

@@ -115,7 +115,7 @@ export interface GenerationMetric {
 }
 
 export interface BrandState {
-  version: 4;
+  version: 5;
   product: string;
   updatedAt: string;
   rounds: BrandRound[];
@@ -149,7 +149,7 @@ export interface BrandState {
 
 export function emptyBrandState(product = ""): BrandState {
   return {
-    version: 4,
+    version: 5,
     product,
     updatedAt: new Date().toISOString(),
     rounds: [],

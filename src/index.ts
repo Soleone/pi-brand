@@ -398,10 +398,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           });
           if (!candidates.length) throw new Error("No fresh names in this pool. Give feedback to explore a different route.");
           if (screenedCtx) {
-            run.state.reserve.unshift(...candidates.slice(3));
-            run.state.reservePoolId = run.state.lastBatch?.poolId;
-            candidates = candidates.slice(0, 3);
-            const checked = await checkFinalists({ ...run.state, finalists: candidates.map(entry => entry.name) }, "screen", checkDependencies(screenedCtx, run.state), { signal: ctx.signal });
+            const checked = await checkFinalists({ ...run.state, finalists: candidates.slice(0, 3).map(entry => entry.name) }, "screen", checkDependencies(screenedCtx, run.state), { signal: ctx.signal });
             usage = addUsage(usage, checked.usage);
             for (const [name, record] of Object.entries(checked.records)) if (!checked.cached.some(entry => availabilityKey(entry) === name)) recordAvailability(run.state, name, record);
           }
@@ -414,16 +411,22 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
           return { run, round, candidates };
         });
         const { run, round, candidates } = prepared;
+        const origin = round.origin === "reserve" ? "Remaining names from the previous pool; no new generation." : round.origin === "external" ? "Externally supplied names; original generation prompt unknown." : 'Generated from brief r' + round.briefRevision + '.';
         if (ctx.mode === "tui" && ctx.hasUI) {
+          const outcome = await pickNames(ctx, candidates, { title: "Select names to keep in All", origin, selectionOnly: true });
+          const picked = outcome?.kind === "picked" ? outcome.names : [];
+          if (picked.length) await mutate(ctx, state => selectNames(state, picked));
           position.tab = "all";
           position.cursor = 0;
           position.roundId = undefined;
           position.query = "";
           position.marked = [];
+          position.notice = picked.length
+            ? `${picked.length} of ${candidates.length} selected. Unselected names remain in History.`
+            : `No names selected. Round ${round.id} remains in History.`;
           overview = true;
           continue;
         }
-        const origin = round.origin === "reserve" ? "Remaining names from the previous pool; no new generation." : round.origin === "external" ? "Externally supplied names; original generation prompt unknown." : 'Generated from brief r' + round.briefRevision + '.';
         if (!ctx.hasUI) return textResult(origin + "\n" + candidates.map(entry => entry.name).join(", ") + "\nUse /brand keep <names> to save favorites; /brand round inspects the inputs.", { roundId: round.id, picked: [] as string[] }, usage);
         const outcome = await pickNames(ctx, candidates, { title: "Pick favorites", origin, context: 'Explore: ' + (run.state.brief.direction || "Open exploration") });
         const picked = await mutate(ctx, state => addLikes(state, round, candidates.filter(entry => outcome?.names.includes(entry.name))));
@@ -465,7 +468,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
 
   pi.registerTool({
     name: "brand_generate", label: "Generate names", executionMode: "sequential",
-    description: "Generate and pick names from the canonical saved brief. Usually call without arguments. Save user feedback through brand_feedback first, not as a replacement direction. Optional screened mode checks three names before display, only when explicitly requested.",
+    description: "Generate and pick names from the canonical saved brief. Usually call without arguments. Save user feedback through brand_feedback first, not as a replacement direction. Shows the entire available pool. Optional screened mode checks only the first three names without hiding the others, only when explicitly requested.",
     parameters: Type.Object({ product: Type.Optional(Type.String({ maxLength: 6000 })), direction: Type.Optional(Type.String({ maxLength: 6000 })), screened: Type.Optional(Type.Boolean()) }),
     async execute(_id, params, _signal, _update, ctx) {
       if (params.product?.trim() && params.product.trim() !== load(ctx).state.product) await updateFeedback(ctx, params.product, "chat", { product: params.product.trim() }, "assistant");
@@ -663,7 +666,7 @@ export default function registerPiBrand(pi: ExtensionAPI): void {
         }
         if (command === "screened") {
           if (!run.state.product) throw new Error("Start with /brand <product> first.");
-          pi.sendUserMessage("Call brand_generate once with screened true. I explicitly want three names quick-screened before display. The tool owns the workflow; do no independent research."); return;
+          pi.sendUserMessage("Call brand_generate once with screened true. Show the entire pool, with only the first three names quick-screened. The tool owns the workflow; do no independent research."); return;
         }
         if (command === "keep") {
           const names = namesFrom(tail, run.state);

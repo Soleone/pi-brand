@@ -55,5 +55,5 @@ export async function takeBatch(state: BrandState, request: GenerationRequest, s
     origin = "generated";
   }
   state.lastBatch = { poolId: pool!.id, origin: pool!.origin === "external" ? "external" : origin };
-  return state.reserve.splice(0, 12);
+  return state.reserve.splice(0);
 }

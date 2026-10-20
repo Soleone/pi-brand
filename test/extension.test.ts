@@ -3,11 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, initTheme, withFileMutationQueue, type ExtensionAPI, type ExtensionCommandContext, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import register from "../src/index.ts";
 import { formatScore } from "../src/scoring.ts";
 import { CHECK_RESEARCH_VERSION } from "../src/checker.ts";
-import { loadBrandState, saveBrandState } from "../src/store.ts";
+import { excludedNames as excludedNamesForTest, loadBrandState, saveBrandState, selectNames } from "../src/store.ts";
 
 const candidates = ["Able", "Bold", "Calm", "Daring", "Eager", "Fresh", "Grand", "Happy", "Ideal", "Jolly", "Keen", "Lively", "Merry", "Noble", "Open", "Proud", "Quick", "Ready", "Sharp", "Tidy", "Upbeat", "Vivid", "Warm", "Zesty"];
 const usage = { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.001, cacheRead: 0, cacheWrite: 0, total: 0.002 } };
@@ -30,6 +30,7 @@ function harness() {
   const dialogs: { title: string; choices: string[] }[] = [];
   const requestedModels: string[] = [];
   const briefUpdates: Record<string, unknown>[] = [];
+  const creativeBatches: string[][] = [];
   const requests: { role: string; prompt: string }[] = [];
   const editors: { title: string; prefill: string }[] = [];
   let modelCalls = 0;
@@ -73,21 +74,24 @@ function harness() {
         assert.doesNotMatch(JSON.stringify(context), /expensive main history/);
         const schema = context.tools[0] as { parameters: { properties: { results?: unknown } } };
         const items = schema.parameters.properties.results ? JSON.parse(String(context.messages[0].content).split("\n").at(-1)!) as { name: string; evidence: { url: string }[] }[] : undefined;
-        const value = briefRole ? (briefUpdates.shift() ?? { style: "short and confident" }) : items ? { results: items.map((item) => ({ name: item.name, reason: "limited source findings", sourceUrls: item.evidence.map((source) => source.url), famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: null, needsReview: false })) } : { candidates: candidates.map((name) => ({ name })) };
+        const value = briefRole ? (briefUpdates.shift() ?? { style: "short and confident" }) : items ? { results: items.map((item) => ({ name: item.name, reason: "limited source findings", sourceUrls: item.evidence.map((source) => source.url), famousCollision: false, sameSpaceCollision: false, giantAssociation: false, unrelatedCount: 0, comParked: null, needsReview: false })) } : { candidates: (creativeBatches.shift() ?? candidates).map((name) => ({ name })) };
         return { result: async () => ({ stopReason: "toolUse", usage, content: [{ type: "toolCall", name: "submit_result", id: "call", arguments: value }] }) };
       },
     },
     sessionManager: { getSessionId: () => "test-session", getBranch: () => { throw new Error("expensive main history must not be read"); } },
   } as unknown as ExtensionCommandContext;
   register(pi);
+  const appPushAll = () => choices.push(...candidates.map((name) => `[ ] ${name}`), "Save and close");
   return {
-    ctx, events, tools, messages, notices, choices, inputs, dialogs, requestedModels, briefUpdates, requests, editors,
+    ctx, events, tools, messages, notices, choices, inputs, dialogs, requestedModels, briefUpdates, creativeBatches, requests, editors,
     emit: async (event: string) => {
       await eventHandlers.get(event)?.({ type: event }, ctx);
       await new Promise<void>(resolve => setImmediate(resolve));
       await withFileMutationQueue(loadBrandState(project, true).path, async () => {});
     },
     command: (args: string) => commands.get("brand")!(args, ctx),
+    pickAll: () => appPushAll(),
+    selectRound: () => { const saved = loadBrandState(ctx.cwd, true); selectNames(saved.state, saved.state.rounds.at(-1)!.candidates.map(entry => entry.name)); saveBrandState(saved.path, saved.state); },
     settings: () => commands.get("brand-settings")!("", ctx),
     state: () => loadBrandState(project, true).state,
     modelCalls: () => modelCalls,
@@ -96,11 +100,18 @@ function harness() {
 }
 
 function terminalScripts(ctx: ExtensionCommandContext, scripts: string[][]): string[][] {
+  initTheme("dark", false);
   const frames: string[][] = [];
   Object.assign(ctx, { mode: "tui" });
   Object.assign(ctx.ui, { custom: async (factory: (tui: unknown, theme: unknown, keys: unknown, done: (value: unknown) => void) => { render(width: number): string[]; handleInput(data: string): void }) => {
     let result: unknown;
-    const component = factory({ requestRender() {} }, { fg: (_color: string, text: string) => text, bold: (text: string) => text }, {}, value => { result = value; });
+    let complete!: (value: unknown) => void;
+    const completed = new Promise(resolve => { complete = resolve; });
+    const component = factory({ requestRender() {} }, { fg: (_color: string, text: string) => text, bold: (text: string) => text }, {}, value => { result = value; complete(value); });
+    if (component instanceof BorderedLoader) {
+      try { return await completed; }
+      finally { component.dispose(); }
+    }
     const keys = scripts.shift();
     assert.ok(keys, "unexpected extra screen");
     frames.push(component.render(80));
@@ -111,20 +122,65 @@ function terminalScripts(ctx: ExtensionCommandContext, scripts: string[][]): str
   return frames;
 }
 
-test("terminal bulk marks do not alter taste or block reserve reuse", async () => {
+test("terminal bulk marks do not alter taste and the next generation requests fresh names", async () => {
   const app = harness();
   try {
     app.choices.push("Save and close");
     await app.command("a todo app");
-    const scripts = [[" ", "g", "\r"], ["f", "\x1b"]];
+    app.selectRound();
+    app.creativeBatches.push(candidates.map(name => `New${name}`));
+    const scripts = [[" ", "g", "\r"], [...Array(candidates.length).fill(" "), "\r"], ["f", "\x1b"]];
     terminalScripts(app.ctx, scripts);
     await app.command("");
     assert.equal(scripts.length, 0);
-    assert.equal(app.modelCalls(), 1);
-    assert.deepEqual(app.state().liked.map(entry => entry.name), ["Merry"]);
+    assert.equal(app.modelCalls(), 2);
+    assert.deepEqual(app.state().liked.map(entry => entry.name), ["NewAble"]);
     assert.deepEqual(app.state().dismissed, []);
     assert.equal(app.state().rounds.length, 2);
-    assert.equal(app.state().rounds.at(-1)?.origin, "reserve");
+    assert.equal(app.state().rounds.at(-1)?.origin, "generated");
+    assert.deepEqual(app.state().reserve, []);
+  } finally { app.cleanup(); }
+});
+
+test("one generation picker exposes every name, including the last, without generating again", async () => {
+  const app = harness();
+  try {
+    const scripts = [[" ", ...Array(22).fill("\x1b[B"), " ", "\r"], ["\x1b"]];
+    const frames = terminalScripts(app.ctx, scripts);
+    await app.command("tasks");
+    assert.equal(scripts.length, 0);
+    assert.equal(app.modelCalls(), 1);
+    const rendered = frames.flat().join("\n");
+    for (const name of candidates) assert.ok(rendered.includes(`[ ] ${name}`), name);
+    assert.match(rendered, /of 24/);
+    const state = app.state();
+    assert.deepEqual(state.selected, ["Able", "Zesty"]);
+    assert.deepEqual(state.liked, []);
+    assert.deepEqual(state.rounds[0].candidates.map(entry => entry.name), candidates);
+    assert.deepEqual(state.reserve, []);
+    assert.equal(state.pools.length, 1);
+    assert.ok(excludedNamesForTest(state).seen.has("warm"));
+  } finally { app.cleanup(); }
+});
+
+test("generation keeps only picked names in All and leaves the rest in History and exclusions", async () => {
+  const app = harness();
+  try {
+    app.choices.push("Save and close");
+    await app.command("tasks");
+    assert.deepEqual(app.state().selected, []);
+    app.creativeBatches.push(candidates.map(name => `New${name}`));
+    const scripts = [["g", "\r"], [" ", "\r"], ["\x1b"]];
+    terminalScripts(app.ctx, scripts);
+    await app.command("");
+    assert.equal(scripts.length, 0);
+    const state = app.state();
+    assert.deepEqual(state.selected, ["NewAble"]);
+    assert.deepEqual(state.liked, []);
+    assert.deepEqual(state.dismissed, []);
+    assert.equal(state.rounds.at(-1)?.candidates.length, 24);
+    assert.ok(excludedNamesForTest(state).seen.has("newzesty"));
+    assert.ok(!state.selected.includes("NewZesty"));
   } finally { app.cleanup(); }
 });
 
@@ -163,7 +219,7 @@ test("manual duplicates reuse saved names and evidence; discarded names can be r
       app.inputs.push("  aBlE  ");
       terminalScripts(app.ctx, [["N"], ["\r", "c"]]);
       await app.command("");
-      assert.equal(app.state().selected.length, 12);
+      assert.equal(app.state().selected.length, 1);
       assert.deepEqual(app.state().dismissed, []);
       assert.equal(app.state().rounds.length, 1);
       assert.equal(app.state().liked.length, restore ? 0 : 1);
@@ -195,7 +251,7 @@ test("cancelled, empty and invalid manual names leave the list unchanged", async
 test("terminal check shortcut dispatches immediately without a confirmation screen", async () => {
   const app = harness();
   try {
-    app.choices.push("Save and close"); await app.command("tasks");
+    app.choices.push("Save and close"); await app.command("tasks"); app.selectRound();
     const scripts = [[" ", "\x1b[B", " ", "c"]];
     terminalScripts(app.ctx, scripts);
     await app.command("");
@@ -209,7 +265,7 @@ test("terminal check shortcut dispatches immediately without a confirmation scre
 test("command-owned checks reopen the updated list with its filter, cursor and marks", async () => {
   const app = harness();
   try {
-    app.choices.push("Save and close"); await app.command("tasks");
+    app.choices.push("Save and close"); await app.command("tasks"); app.selectRound();
     terminalScripts(app.ctx, [["/", "a", "\r", "\x1b[B", " ", "c"]]);
     await app.command("");
     assert.match(app.messages[0], /names \["Calm"\]/);
@@ -233,7 +289,7 @@ test("restoring an open menu never blocks agent_end and leaves check status clea
   const app = harness();
   let close: ((value: unknown) => void) | undefined;
   try {
-    app.choices.push("Save and close"); await app.command("tasks");
+    app.pickAll(); await app.command("tasks");
     terminalScripts(app.ctx, [["c"]]); await app.command("");
     const statuses: (string | undefined)[] = [];
     Object.assign(app.ctx.ui, { setStatus: (_key: string, text: string | undefined) => statuses.push(text) });
@@ -353,9 +409,9 @@ test("tool checks survive pi's non-enumerable tools and executeTool context", as
 test("shortlist export includes favorite changes from the current screen and performs no research", async () => {
   const app = harness();
   try {
-    app.choices.push("[ ] Able", "Save and close"); await app.command("tasks");
+    app.choices.push("Save and close"); await app.command("tasks"); app.selectRound();
     const before = app.modelCalls();
-    terminalScripts(app.ctx, [["\x1b[B", "f", "\t", "\t", "e"], ["\x1b"]]);
+    terminalScripts(app.ctx, [["f", "\x1b[B", "f", "\t", "\t", "e"], ["\x1b"]]);
     await app.command("");
     const exported = loadBrandState(app.ctx.cwd, true).path.replace(/\.json$/, "") + ".shortlist.md";
     const markdown = fs.readFileSync(exported, "utf8");
@@ -384,7 +440,7 @@ test("interrupted checks return without retrying; session changes and shutdown c
   for (const outcome of ["interrupted", "session-changed", "shutdown"] as const) {
     const app = harness();
     try {
-      app.choices.push("Save and close"); await app.command("tasks");
+      app.pickAll(); await app.command("tasks");
       terminalScripts(app.ctx, [["c"]]); await app.command("");
       if (outcome === "interrupted") {
         const ctx = { ...researchContext(app.ctx, []), signal: AbortSignal.abort(new Error("Check cancelled")) };
@@ -418,8 +474,8 @@ test("a standalone check command does not open a workspace on completion", async
 test("tool-driven checks stay in the workspace loop without dispatching another request", async () => {
   const app = harness();
   try {
-    app.choices.push("Save and close"); await app.command("tasks");
-    const scripts = [["/", "Extra", "\r", "c"], ["\x1b", "\x1b"]];
+    app.choices.push("Save and close"); await app.command("tasks"); app.selectRound();
+    const scripts = [[" ", "\r"], ["/", "Extra", "\r", "c"], ["\x1b", "\x1b"]];
     const frames = terminalScripts(app.ctx, scripts);
     const searches: string[] = [];
     await app.tools.get("brand_pick")!.execute("pick", { candidates: [{ name: "Extra" }] } as never, undefined, undefined, researchContext(app.ctx, searches));
@@ -434,17 +490,18 @@ test("tool-driven checks stay in the workspace loop without dispatching another 
 test("terminal bulk discard removes selected and favorite names but preserves round history", async () => {
   const app = harness();
   try {
-    app.choices.push("[ ] Able", "Save and close");
+    app.choices.push("Save and close");
     await app.command("tasks");
+    app.selectRound();
     Object.assign(app.ctx.ui, { confirm: async () => true });
     const scripts = [[" ", "\x1b[B", " ", "d"], ["\x1b"]];
     terminalScripts(app.ctx, scripts);
     await app.command("");
     assert.equal(scripts.length, 0);
-    assert.equal(app.state().selected.length, 10);
+    assert.equal(app.state().selected.length, 22);
     assert.deepEqual(app.state().liked, []);
     assert.deepEqual(app.state().dismissed, ["Able", "Bold"]);
-    assert.equal(app.state().rounds[0].candidates.length, 12);
+    assert.equal(app.state().rounds[0].candidates.length, 24);
   } finally { app.cleanup(); }
 });
 
@@ -461,6 +518,7 @@ test("selected names can be batch checked without favoriting; unchecked-only ski
   try {
     app.choices.push("Save and close"); await app.command("tasks");
     const saved = loadBrandState(app.ctx.cwd, true);
+    selectNames(saved.state, saved.state.rounds[0]!.candidates.map(entry => entry.name));
     saved.state.availability.able = { score: "good", reason: "previous", stage: "deep", checkedAt: "2026-01-01" };
     saveBrandState(saved.path, saved.state);
     const searches: string[] = [];
@@ -471,7 +529,7 @@ test("selected names can be batch checked without favoriting; unchecked-only ski
     await tool.execute("batch", params as never, undefined, undefined, ctx);
     assert.deepEqual([...searches].sort(), names.slice(1).sort());
     assert.deepEqual(app.state().liked, []);
-    assert.equal(app.state().selected.length, 12);
+    assert.equal(app.state().selected.length, 24);
     const resolved = app.state();
     for (const name of names.slice(1)) {
       resolved.availability[name.toLowerCase()] = { score: "good", reason: "resolved later", stage: "deep", checkedAt: "2026-01-02" };
@@ -553,7 +611,8 @@ test("commands generate in isolation, refresh favorite-led inputs and never inje
     assert.equal(app.modelCalls(), 1);
     assert.equal(app.state().liked[0].name, "Able");
     assert.equal(app.state().reserve.length, 0);
-    app.choices.push("[ ] Merry", "Save and close");
+    app.creativeBatches.push(candidates.map(name => `New${name}`));
+    app.choices.push("[ ] NewMerry", "Save and close");
     await app.command("more");
     assert.equal(app.modelCalls(), 2);
     assert.equal(app.state().liked.length, 2);
@@ -696,7 +755,7 @@ test("owned cached checks need no web tool or model call and allow automatic com
   } finally { app.cleanup(); }
 });
 
-test("explicit screened mode checks only three names; a new favorite invalidates the reserve", async () => {
+test("explicit screened mode shows the entire pool while checking only three names", async () => {
   const app = harness();
   try {
     await app.command("note familiar words");
@@ -716,7 +775,9 @@ test("explicit screened mode checks only three names; a new favorite invalidates
     assert.equal(result.terminate, true);
     assert.equal(searches, 3);
     assert.equal(app.modelCalls(), 3);
-    assert.equal(app.state().rounds[0].candidates.length, 3);
+    assert.equal(app.state().rounds[0].candidates.length, 24);
+    assert.ok(app.dialogs.some(dialog => dialog.choices.includes("[ ] Zesty")));
+    assert.deepEqual(Object.keys(app.state().availability).sort(), ["able", "bold", "calm"]);
     assert.equal(app.state().reserve.length, 0);
     assert.equal(app.state().availability.able.stage, "screen");
     assert.deepEqual(app.messages, []);
@@ -741,14 +802,15 @@ test("closing saves explicit picks and never rewrites the viewed round", async (
     app.choices.push("[ ] Able", "Save and close");
     await app.command("tasks");
     assert.deepEqual(app.state().liked.map(entry => entry.name), ["Able"]);
-    assert.equal(app.state().rounds[0].candidates.length, 12);
+    assert.equal(app.state().rounds[0].candidates.length, 24);
     assert.deepEqual(app.state().dismissed, []);
     assert.equal(app.state().reserve.length, 0);
+    app.creativeBatches.push(candidates.map(name => `New${name}`));
     app.choices.push("More names", "Save and close");
     await app.command("");
     assert.equal(app.modelCalls(), 2);
     assert.equal(app.state().rounds[1].origin, "generated");
-    assert.equal(app.state().rounds[0].candidates.length, 12);
+    assert.equal(app.state().rounds[0].candidates.length, 24);
     assert.ok(app.requests.at(-1)?.prompt.includes("positive taste references"));
   } finally { app.cleanup(); }
 });
@@ -868,7 +930,7 @@ test("failed interpretation retains the original feedback without changing the b
     assert.equal(app.state().briefRevision, revision);
     assert.equal(app.state().feedback.at(-1)?.text, "HQ please");
     assert.ok(app.state().feedback.at(-1)?.error);
-    assert.equal(app.state().reserve.length, 12);
+    assert.equal(app.state().reserve.length, 0);
   } finally { app.cleanup(); }
 });
 
@@ -880,7 +942,7 @@ test("models remain in settings; worker routing does not change creative input o
     app.choices.push("Worker (evidence assessment): same as creative", "openai/cheap-worker", "Save settings");
     await app.settings();
     assert.equal(app.state().workerModel, "openai/cheap-worker");
-    assert.equal(app.state().reserve.length, 12);
+    assert.equal(app.state().reserve.length, 0);
     app.choices.push("Creative (name generation): openai/gpt-6-luna", "openai/other-creative", "Cancel");
     await app.settings();
     assert.equal(app.state().model, "openai/gpt-6-luna");

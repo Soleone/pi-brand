@@ -127,6 +127,12 @@ export function loadBrandState(
     parsed.reservePoolId = undefined;
     warnings.push("Active names now include the last viewed round and favorites. Older rounds remain in History; an external v3 backup was retained.");
   }
+  if ((raw as { version: number }).version === 4) {
+    const backup = `${statePath}.v4-backup`;
+    try { fs.copyFileSync(statePath, backup, fs.constants.COPYFILE_EXCL); fs.chmodSync(backup, 0o600); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    warnings.push("Unpicked names from earlier batches left the active list. They remain in History and stay excluded; favorites and manually added names were kept. An external v4 backup was retained.");
+  }
   const markdown = fs.readFileSync(documents.brief, "utf8");
   let content;
   try { content = parseBrief(markdown); }
@@ -135,7 +141,7 @@ export function loadBrandState(
     applyBriefChanges(parsed, content, { text: markdown, source: "file", author: "unknown" });
   }
   parsed.briefDocumentHash = documentHash(markdown);
-  if ((raw as { version: number }).version === 3) saveBrandState(statePath, parsed);
+  if ((raw as { version: number }).version === 3 || (raw as { version: number }).version === 4) saveBrandState(statePath, parsed);
   return { state: parsed, path: statePath, isNew: false, warnings };
 }
 
@@ -158,7 +164,7 @@ export function saveBrandState(statePath: string, state: BrandState): void {
     if (!history.includes(`<!-- feedback:${entry.id} -->`)) history += `\n${formatFeedbackEntry(entry)}`;
   }
   atomicWrite(documents.feedback, history);
-  const payload: BrandState = { ...state, version: 4, updatedAt: new Date().toISOString() };
+  const payload: BrandState = { ...state, version: 5, updatedAt: new Date().toISOString() };
   atomicWrite(statePath, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
@@ -199,7 +205,6 @@ export function recordRound(
     poolId: input.poolId, origin: input.origin ?? "legacy", briefRevision: input.briefRevision,
   };
   state.rounds.push(round);
-  selectNames(state, input.candidates.map(entry => entry.name));
   if (input.directionHint?.trim() && !state.directionNotes.includes(input.directionHint.trim())) {
     state.directionNotes.push(input.directionHint.trim());
   }
@@ -377,7 +382,7 @@ export function excludedNames(state: BrandState): { seen: Set<string>; kept: Set
 function normalizeState(raw: unknown): BrandState | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (record.version !== 1 && record.version !== 2 && record.version !== 3 && record.version !== 4) return undefined;
+  if (record.version !== 1 && record.version !== 2 && record.version !== 3 && record.version !== 4 && record.version !== 5) return undefined;
   if (!Array.isArray(record.rounds) || !Array.isArray(record.liked)) return undefined;
   const state = emptyBrandState(typeof record.product === "string" ? record.product : "");
   if (typeof record.updatedAt === "string") state.updatedAt = record.updatedAt;
@@ -461,7 +466,7 @@ function normalizeState(raw: unknown): BrandState | undefined {
   if (Array.isArray(record.generationMetrics)) {
     state.generationMetrics = record.generationMetrics.filter((item) => item && typeof item === "object" && typeof item.model === "string" && Number.isFinite(item.elapsedMs) && Number.isFinite(item.modelCalls) && Number.isFinite(item.generated)).slice(-50);
   }
-  if (record.version === 3 || record.version === 4) {
+  if (record.version === 3 || record.version === 4 || record.version === 5) {
     if (!Number.isInteger(record.briefRevision) || (record.briefRevision as number) < 1 || !Array.isArray(record.feedback) || !Array.isArray(record.pools)) throw new Error("Invalid naming context in saved run; refusing to replace it.");
     state.briefRevision = record.briefRevision as number;
     state.feedback = record.feedback as BrandState["feedback"];
@@ -472,10 +477,16 @@ function normalizeState(raw: unknown): BrandState | undefined {
   } else {
     state.feedback = state.directionNotes.map((text, index) => ({ id: `legacy-${index}`, createdAt: new Date().toISOString(), author: "unknown", source: "legacy", text, briefRevision: 1, changes: [] }));
   }
-  if (record.version === 4 && (!Array.isArray(record.selected) || record.selected.some(name => typeof name !== "string"))) throw new Error("Invalid active-name list; refusing to replace it.");
+  if (record.version >= 4 && (!Array.isArray(record.selected) || record.selected.some(name => typeof name !== "string"))) throw new Error("Invalid active-name list; refusing to replace it.");
   const discarded = new Set(state.dismissed.map(availabilityKey));
   const candidates = new Map([...state.rounds.flatMap(round => round.candidates), ...state.liked].map(entry => [availabilityKey(entry.name), entry.name]));
-  const selected = record.version === 4 ? record.selected as string[] : [...(state.rounds.at(-1)?.candidates.map(entry => entry.name) ?? []), ...state.liked.map(entry => entry.name)];
+  let selected = record.version >= 4 ? record.selected as string[] : [...(state.rounds.at(-1)?.candidates.map(entry => entry.name) ?? []), ...state.liked.map(entry => entry.name)];
+  if (record.version === 4) {
+    // v4 auto-selected every generated batch. Keep only explicit picks: favorites and names added by hand.
+    const roundNames = new Set(state.rounds.flatMap((round) => round.candidates.map((entry) => availabilityKey(entry.name))));
+    const favorites = new Set(state.liked.map((entry) => availabilityKey(entry.name)));
+    selected = selected.filter((name) => favorites.has(availabilityKey(name)) || !roundNames.has(availabilityKey(name)));
+  }
   state.selected = [...new Map([...selected, ...state.liked.map(entry => entry.name)].map(name => candidates.get(availabilityKey(name)) ?? name.trim()).filter(name => !!name && !discarded.has(availabilityKey(name))).map(name => [availabilityKey(name), name])).values()];
   state.liked = state.liked.filter(entry => !discarded.has(availabilityKey(entry.name)));
   return state;
